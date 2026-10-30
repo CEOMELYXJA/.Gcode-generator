@@ -1,0 +1,749 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CR-10 — Test de trajet</title>
+<style>
+:root { --bg:#c0c0c0; --panel:#dfdfdf; --ink:#111; --blue:#000080; --shadow:#808080; --light:#fff; --dark:#404040; }
+* { box-sizing:border-box; }
+body { margin:0; padding:18px; color:var(--ink); background:#008080; font:14px Tahoma,Arial,sans-serif; }
+.window { max-width:980px; margin:0 auto; padding:3px; background:var(--bg); border:2px solid; border-color:var(--light) var(--dark) var(--dark) var(--light); box-shadow:2px 2px 0 #000; }
+.titlebar { background:var(--blue); color:#fff; font-weight:bold; padding:7px 9px; letter-spacing:.1px; }
+.titlebar span { float:right; border:1px solid #fff; padding:0 5px; line-height:17px; margin-top:-2px; }
+.menu { padding:5px 8px; border-bottom:1px solid #888; }
+main { padding:14px; display:grid; grid-template-columns:minmax(270px, 1fr) minmax(280px, 1.05fr); gap:14px; }
+fieldset { border:2px groove #fff; margin:0 0 12px; padding:11px 12px 12px; }
+legend { padding:0 4px; }
+label { display:block; margin:8px 0 3px; }
+input, select { width:100%; height:29px; padding:4px 7px; border:2px inset #fff; background:#fff; color:#111; font:14px Tahoma,Arial,sans-serif; }
+input[type="file"] { height:auto; padding:4px; }
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; }
+.hint { color:#333; font-size:12px; line-height:1.5; margin:8px 0 0; }
+.note { background:#ffffdf; border:1px solid #888; padding:9px; line-height:1.45; margin-bottom:12px; }
+button { font:14px Tahoma,Arial,sans-serif; background:var(--bg); border:2px solid; border-color:var(--light) var(--dark) var(--dark) var(--light); padding:7px 12px; cursor:pointer; color:#111; }
+button:active { border-color:var(--dark) var(--light) var(--light) var(--dark); }
+button:disabled { color:#777; cursor:not-allowed; }
+.actions { display:flex; gap:8px; flex-wrap:wrap; }
+.status { min-height:20px; margin-top:8px; font-size:12px; }
+.previewbox { background:#fff; border:2px inset #fff; padding:8px; }
+canvas { display:block; width:100%; height:auto; image-rendering:pixelated; cursor:grab; touch-action:none; }
+canvas.dragging { cursor:grabbing; }
+.readout { font-size:12px; line-height:1.5; padding:7px 2px 0; }
+progress { width:100%; height:18px; margin-top:7px; }
+textarea { display:block; width:100%; height:240px; resize:vertical; margin-top:12px; padding:8px; border:2px inset #fff; background:#fff; color:#111; font:12px Consolas,"Courier New",monospace; }
+footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size:12px; line-height:1.5; }
+.bad { color:#a00000; font-weight:bold; }
+@media(max-width:700px) { body{padding:8px} main{grid-template-columns:1fr;padding:10px} }
+</style>
+</head>
+<body>
+<div class="window">
+  <div class="titlebar">CR-10 — Générateur de trajet <span>_ □ ×</span></div>
+  <div class="menu">Fichier&nbsp;&nbsp;&nbsp; Trajet&nbsp;&nbsp;&nbsp; Aide</div>
+  <main>
+    <section>
+      <div id="explanation" class="note"><strong>Test de déplacement seulement.</strong> La buse suit le trajet à Z 5 mm au-dessus du plateau. Chauffage désactivé, aucune extrusion.</div>
+      <fieldset>
+        <legend>Trajet (millimètres)</legend>
+        <div class="grid2">
+          <div><label for="shape">Forme du trajet</label><select id="shape"><option value="rectangle">Rectangle</option><option value="circle">Cercle / ellipse</option><option value="triangle">Triangle</option><option value="sine">Vague (fonction sinus)</option><option value="svg">Importer un SVG vectoriel</option></select></div>
+          <div><label for="surface">Surface de référence</label><select id="surface"><option value="flat">Plateau seul</option><option value="sphere">Sphère</option><option value="cylinder">Cylindre</option></select></div>
+          <div><label for="x">Position X</label><input id="x" type="number" min="0" max="300" step="1" value="100"></div>
+          <div><label for="y">Position Y</label><input id="y" type="number" min="0" max="300" step="1" value="100"></div>
+          <div><label for="w">Largeur</label><input id="w" type="number" min="1" max="300" step="1" value="100"></div>
+          <div><label for="h">Hauteur</label><input id="h" type="number" min="1" max="300" step="1" value="100"></div>
+          <div id="zBox"><label for="z">Hauteur Z au-dessus du plateau</label><input id="z" type="number" min="1" max="20" step="1" value="5"></div>
+          <div><label id="liftLabel" for="lift">Montée entre morceaux SVG (mm)</label><input id="lift" type="number" min="0" max="10" step="1" value="0"></div>
+          <div><label for="speed">Vitesse XY (mm/s)</label><input id="speed" type="number" min="1" max="100" step="1" value="20"></div>
+        </div>
+        <p id="liftHint" class="hint">Chaque morceau est parcouru une seule fois. 0 = levée désactivée. Entre deux tracés SVG séparés, la buse monte de cette valeur, se déplace, puis redescend à Z.</p>
+        <div id="objectBox" hidden>
+          <div class="grid2">
+            <div><label for="objectDiameter">Diamètre de la forme (mm)</label><input id="objectDiameter" type="number" min="10" max="300" step="1" value="160"></div>
+            <div id="cylinderHeightBox"><label id="objectHeightLabel" for="objectHeight">Longueur du cylindre (mm)</label><input id="objectHeight" type="number" min="1" max="300" step="1" value="150"></div>
+            <div id="cylinderOrientationBox"><label for="cylinderOrientation">Orientation du cylindre</label><select id="cylinderOrientation"><option value="side">Couché — côté arrondi</option><option value="vertical">Debout — dessus plat</option></select></div>
+            <div id="cylinderAngleBox"><label for="cylinderAngle">Angle de l’axe sur le plateau (°)</label><input id="cylinderAngle" type="number" min="0" max="359" step="1" value="0"></div>
+            <div><label for="objectZ">Position Z de la forme (mm)</label><input id="objectZ" type="number" min="-300" max="300" step="1" value="0"></div>
+            <div><label for="clearance">Jeu au-dessus de la forme (mm)</label><input id="clearance" type="number" min="1" max="30" step="1" value="4"></div>
+          </div>
+          <p class="hint">La forme orange est un guide visuel. Son centre suit le centre de votre zone X/Y. Couché : 0° aligne l’axe sur X, 90° sur Y. Le trajet suit le côté arrondi tourné vers le haut.</p>
+          <p class="hint">Z 0 = forme posée sur le plateau. Z négatif = forme enfoncée dans le plancher; Z positif = forme soulevée. Le trajet ne peut pas descendre sous Z 0.</p>
+          <p class="hint">Objet réel : mesurez-le et immobilisez-le. Plateau vide : faites le homing, montez Z à la hauteur de transit affichée, puis posez l’objet au centre et à l’angle indiqués sans couper l’imprimante. Le fichier objet omet G28. Le jeu de 4 mm ne compense pas une erreur de taille ou de placement : surveillez le premier trajet.</p>
+        </div>
+        <div id="svgBox" hidden><label for="svgFile">Fichier SVG</label><input id="svgFile" type="file" accept=".svg,image/svg+xml"><p class="hint">Choisis un SVG vectoriel contenant des tracés. Les morceaux séparés seront reliés par des déplacements sans extrusion.</p></div>
+        <p class="hint">Zone maximale : X 0–300 et Y 0–300 mm. La vitesse est affichée en mm/s et convertie pour le G-code. Garde les pinces et les bords du plateau dégagés.</p>
+      </fieldset>
+      <div class="actions">
+        <button id="save" type="button">Enregistrer le .gcode</button>
+        <button id="copy" type="button">Copier le G-code</button>
+        <button id="reset" type="button">Valeurs de départ</button>
+      </div>
+      <div id="status" class="status" aria-live="polite"></div>
+    </section>
+    <section>
+      <fieldset>
+        <legend>Aperçu 3D — plateau 300 × 300 mm</legend>
+        <div class="previewbox"><canvas id="bed" width="420" height="420" aria-label="Aperçu en perspective du trajet et de sa hauteur Z"></canvas></div>
+        <div class="hint">Tourner : clic droit + glisser. Zoom : molette. Recentrer : double-clic gauche.</div>
+        <div id="readout" class="readout"></div>
+        <div class="actions" style="margin-top:8px">
+          <button id="simulate" type="button">▶ Simuler le trajet</button>
+          <button id="restartSim" type="button">↻ Recommencer</button>
+        </div>
+        <div id="simStatus" class="readout">Point rouge = buse · La ligne pointillée montre le départ après le homing. Aperçu accéléré seulement, aucun ordre envoyé à l’imprimante.</div>
+        <progress id="progress" max="100" value="0" aria-label="Progression de la simulation"></progress>
+      </fieldset>
+      <label for="code">G-code qui sera enregistré</label>
+      <textarea id="code" spellcheck="false" readonly></textarea>
+    </section>
+  </main>
+  <footer>Sur l’imprimante : insère la microSD, choisis le fichier et lance-le. Aucune chauffe ni extrusion. Le mode « Plateau seul » fait le homing; le mode sphère/cylindre demande le homing plateau vide avant de poser l’objet. Plateau requis : au moins 300 × 300 mm.</footer>
+</div>
+<script>
+(() => {
+  const ids = ['x','y','w','h','z','lift','speed'];
+  const objectIds = ['objectDiameter','objectHeight','objectZ','clearance','cylinderAngle'];
+  const fields = Object.fromEntries([...ids,...objectIds].map(id => [id, document.getElementById(id)]));
+  const code = document.getElementById('code');
+  const status = document.getElementById('status');
+  const canvas = document.getElementById('bed');
+  const ctx = canvas.getContext('2d');
+  const readout = document.getElementById('readout');
+  const simStatus = document.getElementById('simStatus');
+  const progress = document.getElementById('progress');
+  const simulateButton = document.getElementById('simulate');
+  const save = document.getElementById('save');
+  const copy = document.getElementById('copy');
+  const shapeField = document.getElementById('shape');
+  const surfaceField = document.getElementById('surface');
+  const cylinderOrientationField = document.getElementById('cylinderOrientation');
+  const svgBox = document.getElementById('svgBox');
+  const svgFile = document.getElementById('svgFile');
+  const initialView = {yaw:Math.PI/4, elevation:Math.PI/6, zoom:1};
+  const view = {...initialView};
+  let svgVector = null;
+  let svgName = '';
+  let svgError = '';
+  let simulation = null;
+  let frameId = null;
+  let rotationDrag = null;
+
+  function values() {
+    return {...Object.fromEntries([...ids,...objectIds].map(id => [id, Number(fields[id].value)])),surface:surfaceField.value,cylinderOrientation:cylinderOrientationField.value};
+  }
+  function valid(v) {
+    const requiredIds=v.surface==='flat'?ids:ids.filter(id=>id!=='z');
+    const baseValid=requiredIds.every(id => Number.isFinite(v[id]) && Number.isInteger(v[id])) &&
+      v.x >= 0 && v.y >= 0 && v.w >= 1 && v.h >= 1 &&
+      v.x + v.w <= 300 && v.y + v.h <= 300 &&
+      (v.surface!=='flat'||(v.z >= 1 && v.z <= 20)) &&
+      v.lift >= 0 && v.lift <= 10 && v.speed >= 1 && v.speed <= 100;
+    if(!baseValid) return false;
+    if(v.surface==='flat') return true;
+    const neededObjectIds=v.surface==='sphere'?['objectDiameter','objectZ','clearance']:
+      v.cylinderOrientation==='vertical'?['objectDiameter','objectHeight','clearance']:objectIds;
+    const objectNumbers=neededObjectIds.every(id => Number.isFinite(v[id]) && Number.isInteger(v[id]));
+    if(!objectNumbers || v.objectDiameter<10 || v.objectDiameter>300 || v.objectZ<-300 || v.objectZ>300 || v.clearance<1 || v.clearance>30) return false;
+    if(v.surface==='cylinder' && (v.objectHeight<1 || v.objectHeight>300 || !['side','vertical'].includes(v.cylinderOrientation))) return false;
+    if(v.surface==='cylinder'&&v.cylinderOrientation==='side'&&(v.cylinderAngle<0||v.cylinderAngle>359)) return false;
+    const centerX=v.x+v.w/2,centerY=v.y+v.h/2,radius=v.objectDiameter/2;
+    let objectFits;
+    if(v.surface==='cylinder' && v.cylinderOrientation==='side'){
+      const angle=v.cylinderAngle*Math.PI/180,ux=Math.cos(angle),uy=Math.sin(angle),nx=-uy,ny=ux;
+      objectFits=[-1,1].every(a=>[-1,1].every(b=>{
+        const x=centerX+a*v.objectHeight/2*ux+b*radius*nx,y=centerY+a*v.objectHeight/2*uy+b*radius*ny;
+        return x>=0 && x<=300 && y>=0 && y<=300;
+      }));
+    }else objectFits=centerX-radius>=0 && centerX+radius<=300 && centerY-radius>=0 && centerY+radius<=300;
+    const highest=(v.surface==='sphere'||(v.surface==='cylinder'&&v.cylinderOrientation==='side')?v.objectDiameter:v.objectHeight)+v.objectZ;
+    return objectFits && highest+v.clearance>=0 && highest+v.clearance+v.lift<=400;
+  }
+  function shapeName() {
+    return shapeField.value==='svg' && svgName?'SVG : '+svgName:({rectangle:'Rectangle',circle:'Cercle / ellipse',triangle:'Triangle',sine:'Vague sinusoidale',svg:'SVG vectoriel'})[shapeField.value];
+  }
+  function surfaceName(v) {
+    if(v.surface==='sphere') return 'sphere';
+    if(v.surface==='cylinder'&&v.cylinderOrientation==='side') return 'cylindre couche, axe '+v.cylinderAngle+' degres';
+    return 'cylindre debout';
+  }
+  function segmentsFor(v) {
+    const x2=v.x+v.w,y2=v.y+v.h;
+    if(shapeField.value==='rectangle') return [[{x:v.x,y:v.y},{x:x2,y:v.y},{x:x2,y:y2},{x:v.x,y:y2},{x:v.x,y:v.y}]];
+    if(shapeField.value==='triangle') return [[{x:v.x,y:v.y},{x:x2,y:v.y},{x:v.x+v.w/2,y:y2},{x:v.x,y:v.y}]];
+    if(shapeField.value==='circle') return [Array.from({length:97},(_,i)=>{
+      const a=-Math.PI/2+2*Math.PI*i/96;
+      return {x:v.x+v.w/2+Math.cos(a)*v.w/2,y:v.y+v.h/2+Math.sin(a)*v.h/2};
+    })];
+    if(shapeField.value==='sine') return [Array.from({length:121},(_,i)=>{
+      const t=i/120;
+      return {x:v.x+v.w*t,y:v.y+v.h/2+Math.sin(t*4*Math.PI)*v.h/2};
+    })];
+    if(shapeField.value==='svg' && svgVector){
+      const spanX=svgVector.maxX-svgVector.minX,spanY=svgVector.maxY-svgVector.minY;
+      if(spanX<=0 || spanY<=0) return null;
+      return svgVector.contours.map(contour=>contour.map(p=>({x:v.x+(p.x-svgVector.minX)*v.w/spanX,y:v.y+(p.y-svgVector.minY)*v.h/spanY})));
+    }
+    return null;
+  }
+  function objectCenter(v) { return {x:v.x+v.w/2,y:v.y+v.h/2}; }
+  function canPreviewObject(v) {
+    return v.surface!=='flat' && [v.x,v.y,v.w,v.h,v.objectDiameter,v.objectZ].every(Number.isFinite) &&
+      v.objectDiameter>0 && v.objectDiameter<=300 && (v.surface==='sphere' || (Number.isFinite(v.objectHeight) && v.objectHeight>0 && Number.isFinite(v.cylinderAngle)));
+  }
+  function objectTop(v) { return (v.surface==='sphere'||(v.surface==='cylinder'&&v.cylinderOrientation==='side')?v.objectDiameter:v.objectHeight)+v.objectZ; }
+  function cylinderAxes(v) {
+    const angle=v.cylinderAngle*Math.PI/180,ux=Math.cos(angle),uy=Math.sin(angle);
+    return {ux,uy,nx:-uy,ny:ux};
+  }
+  function surfaceZ(v,p) {
+    const center=objectCenter(v),radius=v.objectDiameter/2;
+    if(v.surface==='cylinder'&&v.cylinderOrientation==='vertical') return v.objectHeight+v.objectZ+v.clearance;
+    if(v.surface==='cylinder'){
+      const axes=cylinderAxes(v),cross=(p.x-center.x)*axes.nx+(p.y-center.y)*axes.ny;
+      return radius+Math.sqrt(Math.max(0,radius*radius-cross*cross))+v.objectZ+v.clearance;
+    }
+    const dx=p.x-center.x,dy=p.y-center.y;
+    return radius+Math.sqrt(Math.max(0,radius*radius-dx*dx-dy*dy))+v.objectZ+v.clearance;
+  }
+  function safeTravelZ(v,between=false) { return objectTop(v)+v.clearance+(between?v.lift:0); }
+  function routeIssue(v,segments) {
+    if(!valid(v)) return v.surface==='flat'
+      ? 'Vérifie les nombres et garde le trajet dans le plateau de 300 × 300 mm.'
+      : 'Vérifie les dimensions et la position Z : l’objet doit tenir sur le plateau et sous Z 400 mm.';
+    if(shapeField.value==='svg' && !svgVector) return svgError||'Choisis un fichier SVG vectoriel.';
+    if(!Array.isArray(segments) || !segments.length || !segments.every(segment=>segment.length>=2)) return 'Cette forme ne contient pas de trajet utilisable.';
+    if(v.surface!=='flat'){
+      const center=objectCenter(v),radius=v.objectDiameter/2;
+      if(v.surface==='cylinder'&&v.cylinderOrientation==='side'){
+        const axes=cylinderAxes(v);
+        if(segments.some(segment=>segment.some(p=>{
+          const dx=p.x-center.x,dy=p.y-center.y,along=dx*axes.ux+dy*axes.uy,cross=dx*axes.nx+dy*axes.ny;
+          return Math.abs(along)>v.objectHeight/2+0.01 || Math.abs(cross)>radius+0.01;
+        }))) return 'Le trajet dépasse le côté arrondi orange. Ajuste son angle, sa longueur, son diamètre ou la zone X/Y.';
+      }else if(segments.some(segment=>segment.some(p=>Math.hypot(p.x-center.x,p.y-center.y)>radius+0.01)))
+        return 'Le trajet dépasse le bord de la forme orange. Réduis sa largeur/hauteur ou augmente le diamètre.';
+      if(preparedSegments(v,segments).some(segment=>segment.some(p=>surfaceZ(v,p)<1)))
+        return 'Une partie du trajet demanderait un Z sous 1 mm. Remonte la forme ou déplace le trajet vers sa partie plus haute.';
+    }
+    return '';
+  }
+  function preparedSegments(v,segments) {
+    if(v.surface!=='sphere' && !(v.surface==='cylinder'&&v.cylinderOrientation==='side')) return segments;
+    return segments.map(segment=>{
+      const dense=[segment[0]];
+      for(let i=1;i<segment.length;i++){
+        const a=segment[i-1],b=segment[i],distance=Math.hypot(b.x-a.x,b.y-a.y);
+        const steps=Math.max(1,Math.ceil(distance/1.5));
+        for(let step=1;step<=steps;step++){
+          const t=step/steps; dense.push({x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t});
+        }
+      }
+      return dense;
+    });
+  }
+  function makeCode(v, segments) {
+    const x2 = v.x + v.w, y2 = v.y + v.h;
+    const feed=Math.round(v.speed*60),fmt=n=>String(Number(n.toFixed(1)));
+    segments=preparedSegments(v,segments);
+    const lines=[
+      '; CR-10 - test de deplacement sans chauffe ni extrusion',
+      '; Plateau nominal : 300 x 300 mm',
+      '; Forme : ' + shapeName(),
+      '; Passages par morceau : 1',
+      '; Zone XY : X' + v.x + ' Y' + v.y + ' a X' + x2 + ' Y' + y2,
+      v.surface==='flat'
+        ? '; Hauteur Z : ' + v.z + ' mm | Montee entre morceaux : ' + v.lift + ' mm'
+        : '; Surface : ' + surfaceName(v) + ' | Diametre : ' + v.objectDiameter + ' mm | Jeu : ' + v.clearance + ' mm',
+      '; Vitesse XY : ' + v.speed + ' mm/s (F' + feed + ' mm/min)',
+      'M104 S0 ; chauffage de la buse desactive',
+      'M140 S0 ; chauffage du plateau desactive',
+      'G21 ; unites en millimetres',
+      'G90 ; coordonnees absolues'
+    ];
+    if(v.surface!=='flat') lines.push('; Position Z de la forme : '+v.objectZ+' mm');
+    if(v.surface==='cylinder') lines.push('; Dimension longitudinale ou hauteur du cylindre : '+v.objectHeight+' mm');
+    if(v.surface==='flat'){
+      lines.push('G28 ; homing des axes','G1 Z' + v.z + ' F600 ; leve la buse',
+        'G1 X' + fmt(segments[0][0].x) + ' Y' + fmt(segments[0][0].y) + ' F' + feed + ' ; rejoint le depart');
+    }else{
+      const start=segments[0][0];
+      lines.push('; Mode objet : homing plateau vide, monter Z avant de poser l objet',
+        'G1 Z' + fmt(safeTravelZ(v)) + ' F600 ; monte au-dessus de l objet',
+        'G1 X' + fmt(start.x) + ' Y' + fmt(start.y) + ' F' + feed + ' ; rejoint le depart en hauteur',
+        'G1 Z' + fmt(surfaceZ(v,start)) + ' F600 ; descend au jeu choisi');
+    }
+    let previous=segments[0][0];
+    for(let s=0;s<segments.length;s++){
+      const segment=segments[s];
+      if(s>0){
+        if(v.surface!=='flat'){
+          lines.push('G1 Z' + fmt(safeTravelZ(v,true)) + ' F600 ; monte au-dessus de l objet pour le transit');
+          lines.push('G1 X' + fmt(segment[0].x) + ' Y' + fmt(segment[0].y) + ' F' + feed + ' ; deplacement en hauteur');
+          lines.push('G1 Z' + fmt(surfaceZ(v,segment[0])) + ' F600 ; revient au jeu choisi');
+        }else if(v.lift>0){
+          lines.push('G1 Z' + (v.z+v.lift) + ' F600 ; leve entre les morceaux');
+          lines.push('G1 X' + fmt(segment[0].x) + ' Y' + fmt(segment[0].y) + ' F' + feed + ' ; deplacement en hauteur');
+          lines.push('G1 Z' + v.z + ' F600 ; revient a la hauteur du trajet');
+        }else lines.push('G1 X' + fmt(segment[0].x) + ' Y' + fmt(segment[0].y) + ' F' + feed + ' ; rejoint le morceau suivant');
+        previous=segment[0];
+      }
+      for(const p of segment.slice(1)){
+        const x=fmt(p.x),y=fmt(p.y),z=v.surface==='flat'?null:fmt(surfaceZ(v,p));
+        if(x===fmt(previous.x) && y===fmt(previous.y) && (z===null || z===fmt(surfaceZ(v,previous)))) continue;
+        lines.push('G1 X' + x + ' Y' + y + (z===null?'':' Z'+z) + ' F' + feed);
+        previous=p;
+      }
+    }
+    lines.push(
+      'M400 ; attend la fin des mouvements',
+      'M104 S0',
+      'M140 S0',
+      '; Fin du test'
+    );
+    return lines.join('\n')+'\n';
+  }
+  function parseSvg(text) {
+    const source=new DOMParser().parseFromString(text,'image/svg+xml');
+    const root=source.documentElement;
+    if(root.localName.toLowerCase()!=='svg' || source.querySelector('parsererror')) throw new Error('Ce fichier ne semble pas être un SVG valide.');
+    const ns='http://www.w3.org/2000/svg',host=document.createElementNS(ns,'svg');
+    host.setAttribute('width','1000'); host.setAttribute('height','1000');
+    if(root.hasAttribute('viewBox')) host.setAttribute('viewBox',root.getAttribute('viewBox'));
+    if(root.hasAttribute('preserveAspectRatio')) host.setAttribute('preserveAspectRatio',root.getAttribute('preserveAspectRatio'));
+    host.style.position='fixed'; host.style.left='-10000px'; host.style.top='0'; host.style.visibility='hidden'; host.style.overflow='visible';
+    const allowedGeometry=new Set(['path','polyline','polygon','line','rect','circle','ellipse']);
+    const allowedAttrs=new Set(['d','points','x','y','x1','x2','y1','y2','width','height','cx','cy','r','rx','ry','transform']);
+    function splitSubpaths(data){
+      const tokens=data.match(/[a-zA-Z]|[-+]?(?:\d*\.?\d+)(?:[eE][-+]?\d+)?/g)||[],parts=[];
+      let current=[];
+      for(const token of tokens){
+        if(/^[Mm]$/.test(token) && current.length){parts.push(current.join(' '));current=[token];}
+        else current.push(token);
+      }
+      if(current.length)parts.push(current.join(' '));
+      return parts;
+    }
+    function copyShape(node){
+      if(node.nodeType!==1) return null;
+      const tag=node.localName.toLowerCase();
+      if(tag!=='g' && !allowedGeometry.has(tag)) return null;
+      if(tag==='path'){
+        const parts=splitSubpaths(node.getAttribute('d')||'');
+        if(parts.length>1){
+          const group=document.createElementNS(ns,'g');
+          if(node.hasAttribute('transform'))group.setAttribute('transform',node.getAttribute('transform'));
+          for(const d of parts){const path=document.createElementNS(ns,'path');path.setAttribute('d',d);group.appendChild(path);}
+          return group;
+        }
+      }
+      const clone=document.createElementNS(ns,tag);
+      for(const attr of node.attributes) if(allowedAttrs.has(attr.name)) clone.setAttribute(attr.name,attr.value);
+      for(const child of node.children){const copied=copyShape(child);if(copied)clone.appendChild(copied);}
+      return clone;
+    }
+    const group=document.createElementNS(ns,'g');
+    if(root.hasAttribute('transform')) group.setAttribute('transform',root.getAttribute('transform'));
+    for(const child of root.children){const copied=copyShape(child);if(copied)group.appendChild(copied);}
+    host.appendChild(group); document.body.appendChild(host);
+    try{
+      const geometries=Array.from(host.querySelectorAll('path,polyline,polygon,line,rect,circle,ellipse'));
+      if(!geometries.length) throw new Error('Le SVG ne contient pas de tracé vectoriel reconnu.');
+      if(geometries.length>150) throw new Error('Ce SVG contient trop de morceaux. Essaie une version simplifiée.');
+      const lengths=geometries.map(el=>typeof el.getTotalLength==='function'?el.getTotalLength():0);
+      const total=lengths.reduce((sum,n)=>sum+n,0);
+      if(!total) throw new Error('Aucun tracé utilisable trouvé dans ce SVG.');
+      const contours=[];
+      geometries.forEach((el,index)=>{
+        const length=lengths[index]; if(length<=0)return;
+        const count=Math.max(2,Math.round(length/total*360));
+        const matrix=el.getCTM(); if(!matrix) return;
+        const contour=[];
+        for(let i=0;i<=count;i++){
+          const p=el.getPointAtLength(length*i/count);
+          const transformed=new DOMPoint(p.x,p.y).matrixTransform(matrix);
+          contour.push({x:transformed.x,y:transformed.y});
+        }
+        if(contour.length>=2)contours.push(contour);
+      });
+      const points=contours.flat();
+      if(points.length<3) throw new Error('Aucun tracé utilisable trouvé dans ce SVG.');
+      if(points.some(p=>!Number.isFinite(p.x)||!Number.isFinite(p.y))) throw new Error('Le SVG contient des coordonnées illisibles.');
+      const xs=points.map(p=>p.x),ys=points.map(p=>p.y);
+      const bounds={minX:Math.min(...xs),maxX:Math.max(...xs),minY:Math.min(...ys),maxY:Math.max(...ys)};
+      if(bounds.maxX-bounds.minX<0.001 || bounds.maxY-bounds.minY<0.001) throw new Error('Le tracé SVG doit avoir une largeur et une hauteur.');
+      return {...bounds,contours};
+    }finally{host.remove();}
+  }
+  function drawReference(v,point,depth) {
+    const center=objectCenter(v),radius=v.objectDiameter/2,facets=[];
+    const putFacet=(points,layer,shade)=>facets.push({points,layer,shade,depth:points.reduce((sum,p)=>sum+depth(p.x,p.y,p.z),0)/points.length});
+    const spherePoint=(theta,phi)=>({
+      x:center.x+radius*Math.sin(theta)*Math.cos(phi),
+      y:center.y+radius*Math.sin(theta)*Math.sin(phi),
+      z:radius+radius*Math.cos(theta)+v.objectZ,theta
+    });
+    if(v.surface==='sphere'){
+      const latitudes=18,longitudes=48,rings=Array.from({length:latitudes+1},(_,i)=>
+        Array.from({length:longitudes},(_,j)=>spherePoint(Math.PI*i/latitudes,2*Math.PI*j/longitudes)));
+      for(let i=0;i<latitudes;i++) for(let j=0;j<longitudes;j++){
+        const next=(j+1)%longitudes,a=rings[i][j],b=rings[i][next],c=rings[i+1][next],d=rings[i+1][j];
+        const theta=(a.theta+b.theta+c.theta+d.theta)/4;
+        const shade=Math.round(154+90*Math.max(0,Math.cos(theta)));
+        putFacet([a,b,c],'sphere',shade); putFacet([a,c,d],'sphere',shade);
+      }
+      facets.sort((a,b)=>a.depth-b.depth);
+      for(const facet of facets){
+        ctx.beginPath(); facet.points.forEach((p,i)=>{const q=point(p.x,p.y,p.z);i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y);});
+        ctx.closePath(); ctx.fillStyle='rgb(235,'+facet.shade+',105)'; ctx.fill();
+      }
+      ctx.strokeStyle='rgba(110,55,10,.7)';ctx.lineWidth=1.5;ctx.beginPath();
+      for(let j=0;j<=longitudes;j++){const p=rings[Math.floor(latitudes/2)][j%longitudes],q=point(p.x,p.y,p.z);j?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y);}
+      ctx.closePath();ctx.stroke();
+    }else if(v.cylinderOrientation==='side'){
+      const count=48,lengthSteps=14,axes=cylinderAxes(v),length=v.objectHeight;
+      const cylinderPoint=(along,phi)=>({
+        x:center.x+along*axes.ux+radius*Math.sin(phi)*axes.nx,
+        y:center.y+along*axes.uy+radius*Math.sin(phi)*axes.ny,
+        z:radius+radius*Math.cos(phi)+v.objectZ
+      });
+      for(let i=0;i<lengthSteps;i++) for(let j=0;j<count;j++){
+        const a=-length/2+length*i/lengthSteps,b=-length/2+length*(i+1)/lengthSteps,
+          p=2*Math.PI*j/count,q=2*Math.PI*(j+1)/count;
+        const shade=Math.round(150+75*Math.max(0,Math.cos(p+Math.PI/count)));
+        putFacet([cylinderPoint(a,p),cylinderPoint(a,q),cylinderPoint(b,q),cylinderPoint(b,p)],'side',shade);
+      }
+      for(const end of [-length/2,length/2]){
+        const capCenter={x:center.x+end*axes.ux,y:center.y+end*axes.uy,z:radius+v.objectZ};
+        for(let j=0;j<count;j++){
+          const p=2*Math.PI*j/count,q=2*Math.PI*(j+1)/count;
+          putFacet([capCenter,cylinderPoint(end,p),cylinderPoint(end,q)],'end',185);
+        }
+      }
+      facets.sort((a,b)=>a.depth-b.depth);
+      for(const facet of facets){
+        ctx.beginPath();facet.points.forEach((p,i)=>{const q=point(p.x,p.y,p.z);i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y);});
+        ctx.closePath();ctx.fillStyle=facet.layer==='end'?'rgb(205,'+facet.shade+',77)':'rgb(224,'+facet.shade+',80)';ctx.fill();
+      }
+      ctx.strokeStyle='#7a4315';ctx.lineWidth=1.5;
+      for(const phi of [-Math.PI/2,Math.PI/2]){
+        const a=point(cylinderPoint(-length/2,phi).x,cylinderPoint(-length/2,phi).y,cylinderPoint(-length/2,phi).z),
+          b=point(cylinderPoint(length/2,phi).x,cylinderPoint(length/2,phi).y,cylinderPoint(length/2,phi).z);
+        ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+      }
+    }else{
+      const count=48,height=v.objectHeight;
+      const lower=Array.from({length:count},(_,j)=>({x:center.x+radius*Math.cos(2*Math.PI*j/count),y:center.y+radius*Math.sin(2*Math.PI*j/count),z:v.objectZ}));
+      const upper=lower.map(p=>({...p,z:height+v.objectZ}));
+      for(let j=0;j<count;j++){
+        const next=(j+1)%count;
+        putFacet([lower[j],lower[next],upper[next],upper[j]],'side',j%2?174:188);
+        const middle={x:center.x,y:center.y,z:height+v.objectZ};
+        putFacet([middle,upper[j],upper[next]],'top',220);
+      }
+      facets.sort((a,b)=>a.depth-b.depth);
+      for(const facet of facets){
+        ctx.beginPath(); facet.points.forEach((p,i)=>{const q=point(p.x,p.y,p.z);i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y);});
+        ctx.closePath(); ctx.fillStyle=facet.layer==='top'?'rgb(255,'+facet.shade+',142)':'rgb(218,'+facet.shade+',72)'; ctx.fill();
+      }
+      ctx.strokeStyle='#7a4315';ctx.lineWidth=1.5;ctx.beginPath();
+      upper.forEach((p,i)=>{const q=point(p.x,p.y,p.z);i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y);});
+      ctx.closePath();ctx.stroke();
+    }
+  }
+  function draw(v, ok, nozzle = null, segments = null) {
+    const centerX = 210, centerY = 234, axisScale = 0.65, zScale = v.surface==='flat'?6:axisScale;
+    const point = (x,y,z=0) => {
+      const dx=x-150,dy=y-150,c=Math.cos(view.yaw),s=Math.sin(view.yaw);
+      const rotatedX=dx*c-dy*s,rotatedY=dx*s+dy*c;
+      const projectedX=centerX+rotatedX*axisScale;
+      const projectedY=centerY+rotatedY*axisScale*Math.sin(view.elevation)-z*zScale*Math.cos(view.elevation)/Math.cos(initialView.elevation);
+      return {x:centerX+(projectedX-centerX)*view.zoom,y:centerY+(projectedY-centerY)*view.zoom};
+    };
+    const depth=(x,y,z)=>{
+      const dx=x-150,dy=y-150,c=Math.cos(view.yaw),s=Math.sin(view.yaw),rotatedY=dx*s+dy*c;
+      return rotatedY*Math.cos(view.elevation)+z*Math.sin(view.elevation);
+    };
+    const polygon = (points, fill, stroke='#333') => {
+      ctx.beginPath(); ctx.moveTo(points[0].x,points[0].y);
+      points.slice(1).forEach(p=>ctx.lineTo(p.x,p.y)); ctx.closePath();
+      ctx.fillStyle=fill; ctx.fill(); ctx.strokeStyle=stroke; ctx.lineWidth=1.5; ctx.stroke();
+    };
+    ctx.clearRect(0,0,420,420);
+    const bed=[point(0,0),point(300,0),point(300,300),point(0,300)];
+    polygon(bed,'#f5f5f5','#111');
+    ctx.strokeStyle='#c3c3c3'; ctx.lineWidth=1;
+    for(let mm=50;mm<300;mm+=50){
+      ctx.beginPath(); ctx.moveTo(point(mm,0).x,point(mm,0).y); ctx.lineTo(point(mm,300).x,point(mm,300).y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(point(0,mm).x,point(0,mm).y); ctx.lineTo(point(300,mm).x,point(300,mm).y); ctx.stroke();
+    }
+    ctx.fillStyle='#111'; ctx.font='12px Tahoma, Arial';
+    ctx.fillText('Y 0 / X 0',point(0,0).x-28,point(0,0).y-8);
+    ctx.fillText('X 300',point(300,0).x-20,point(300,0).y+16);
+    ctx.fillText('Y 300',point(0,300).x-38,point(0,300).y+16);
+    if(canPreviewObject(v)) drawReference(v,point,depth);
+    if(ok){
+      segments=preparedSegments(v,segments);
+      const x2=v.x+v.w,y2=v.y+v.h,z=v.z;
+      const base=[point(v.x,v.y),point(x2,v.y),point(x2,y2),point(v.x,y2)];
+      const top=[point(v.x,v.y,z),point(x2,v.y,z),point(x2,y2,z),point(v.x,y2,z)];
+      if(v.surface==='flat'){
+        const home=point(0,0,z),start=point(segments[0][0].x,segments[0][0].y,z);
+        ctx.save(); ctx.setLineDash([5,4]); ctx.strokeStyle='#b06b00'; ctx.lineWidth=2;
+        ctx.beginPath(); ctx.moveTo(home.x,home.y); ctx.lineTo(start.x,start.y); ctx.stroke(); ctx.restore();
+        for(let i=0;i<4;i++) polygon([base[i],base[(i+1)%4],top[(i+1)%4],top[i]],i%2?'rgba(0,0,128,.10)':'rgba(0,0,128,.16)','#000080');
+        polygon(top,'rgba(110,160,255,.10)','rgba(0,0,0,0)');
+        ctx.save(); ctx.setLineDash([4,3]); ctx.strokeStyle='#777'; ctx.lineWidth=1.5;
+        ctx.beginPath(); base.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y)); ctx.closePath(); ctx.stroke(); ctx.restore();
+      }else{
+        const start=segments[0][0],safe=safeTravelZ(v),homeLow=point(0,0,0),homeHigh=point(0,0,safe);
+        const safeStart=point(start.x,start.y,safe),pathStart=point(start.x,start.y,surfaceZ(v,start));
+        ctx.save();ctx.setLineDash([5,4]);ctx.strokeStyle='#b06b00';ctx.lineWidth=2;ctx.beginPath();
+        ctx.moveTo(homeLow.x,homeLow.y);ctx.lineTo(homeHigh.x,homeHigh.y);ctx.lineTo(safeStart.x,safeStart.y);ctx.lineTo(pathStart.x,pathStart.y);ctx.stroke();ctx.restore();
+      }
+      ctx.strokeStyle='#000080'; ctx.lineWidth=3;
+      for(const segment of segments){
+        ctx.beginPath();
+        segment.forEach((p,i)=>{const q=point(p.x,p.y,v.surface==='flat'?z:surfaceZ(v,p));i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y);});
+        ctx.stroke();
+      }
+      if(segments.length>1){
+        for(let i=1;i<segments.length;i++){
+          const a=segments[i-1][segments[i-1].length-1],b=segments[i][0];
+          const travelZ=v.surface==='flat'?z+v.lift:safeTravelZ(v,true);
+          const liftEnd=point(a.x,a.y,travelZ),liftStart=point(b.x,b.y,travelZ);
+          const baseEnd=point(a.x,a.y,v.surface==='flat'?z:surfaceZ(v,a)),baseStart=point(b.x,b.y,v.surface==='flat'?z:surfaceZ(v,b));
+          ctx.save(); ctx.setLineDash([5,4]); ctx.strokeStyle='#b06b00'; ctx.lineWidth=2; ctx.beginPath();
+          if(v.surface!=='flat' || v.lift>0){
+            ctx.moveTo(baseEnd.x,baseEnd.y);ctx.lineTo(liftEnd.x,liftEnd.y);
+            ctx.moveTo(liftEnd.x,liftEnd.y);ctx.lineTo(liftStart.x,liftStart.y);
+            ctx.moveTo(liftStart.x,liftStart.y);ctx.lineTo(baseStart.x,baseStart.y);
+          }else{ctx.moveTo(baseEnd.x,baseEnd.y);ctx.lineTo(baseStart.x,baseStart.y);}
+          ctx.stroke();ctx.restore();
+        }
+      }
+      if(v.surface==='flat'){
+        const zBase=base[0],zTop=top[0];
+        ctx.strokeStyle='#6a3dad'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(zBase.x,zBase.y); ctx.lineTo(zTop.x,zTop.y); ctx.stroke();
+        ctx.fillStyle='#4b267a'; ctx.font='bold 12px Tahoma, Arial'; ctx.fillText('Z '+z+' mm',zTop.x+7,(zBase.y+zTop.y)/2+4);
+      }else{
+        const a=segments[0][0],modelZ=surfaceZ(v,a)-v.clearance,p1=point(a.x,a.y,modelZ),p2=point(a.x,a.y,modelZ+v.clearance);
+        ctx.strokeStyle='#6a3dad';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();
+        ctx.fillStyle='#4b267a';ctx.font='bold 12px Tahoma, Arial';ctx.fillText('Jeu '+v.clearance+' mm',p2.x+7,(p1.y+p2.y)/2+4);
+      }
+      const start=segments[0][0],dot=point(nozzle?nozzle.x:start.x,nozzle?nozzle.y:start.y,nozzle&&Number.isFinite(nozzle.z)?nozzle.z:(v.surface==='flat'?z:surfaceZ(v,start)));
+      ctx.fillStyle='#d00000'; ctx.beginPath(); ctx.arc(dot.x,dot.y,5,0,Math.PI*2); ctx.fill();
+    }else{
+      ctx.fillStyle='#a00000'; ctx.font='bold 15px Tahoma, Arial'; ctx.fillText('Trajet invalide',145,215);
+    }
+  }
+  function update() {
+    if (frameId !== null) cancelAnimationFrame(frameId);
+    frameId = null; simulation = null;
+    const v=values(),segments=valid(v)?segmentsFor(v):null,issue=routeIssue(v,segments),ok=!issue;
+    svgBox.hidden=shapeField.value!=='svg';
+    document.getElementById('objectBox').hidden=v.surface==='flat';
+    document.getElementById('zBox').hidden=v.surface!=='flat';
+    document.getElementById('cylinderHeightBox').hidden=v.surface!=='cylinder';
+    document.getElementById('cylinderOrientationBox').hidden=v.surface!=='cylinder';
+    document.getElementById('cylinderAngleBox').hidden=v.surface!=='cylinder'||v.cylinderOrientation!=='side';
+    document.getElementById('objectHeightLabel').textContent=v.cylinderOrientation==='side'?'Longueur du cylindre (mm)':'Hauteur du cylindre (mm)';
+    document.querySelector('#objectBox .hint').textContent=v.surface==='sphere'
+      ? 'La forme orange est un guide visuel. Son centre suit le centre de votre zone X/Y. Le trajet suit le sommet de la sphère avec '+v.clearance+' mm de jeu.'
+      : v.cylinderOrientation==='side'
+        ? 'Cylindre couché : 0° aligne son axe sur X, 90° sur Y. La buse suit la moitié arrondie tournée vers le haut, avec '+v.clearance+' mm de jeu.'
+        : 'La forme orange est debout. Le trajet passe au-dessus de sa face plate avec '+v.clearance+' mm de jeu.';
+    document.getElementById('liftLabel').textContent=v.surface==='flat'?'Montée entre morceaux SVG (mm)':'Supplément entre morceaux (mm)';
+    document.getElementById('liftHint').textContent=v.surface==='flat'
+      ? 'Chaque morceau est parcouru une seule fois. 0 = levée désactivée. Entre deux tracés SVG séparés, la buse monte de cette valeur, se déplace, puis redescend à Z.'
+      : 'Chaque morceau est parcouru une seule fois. Entre tracés séparés, la buse monte au-dessus du sommet + jeu choisi, avec ce supplément, puis redescend.';
+    save.disabled = !ok; copy.disabled = !ok;
+    simulateButton.disabled = !ok; document.getElementById('restartSim').disabled = !ok;
+    simulateButton.textContent = '▶ Simuler le trajet';
+    progress.value = 0;
+    simStatus.textContent = v.surface==='flat'
+      ? 'Point rouge = buse · Bloc bleu transparent = espace vide sous le trajet, hauteur Z agrandie pour être visible.'
+      : 'Point rouge = buse · Forme orange = guide de surface · trajet bleu = parcours avec jeu.';
+    const explanation=document.getElementById('explanation');
+    explanation.replaceChildren();
+    const heading=document.createElement('strong'); heading.textContent='Test de déplacement seulement.';
+    explanation.append(heading,document.createTextNode(ok
+      ? v.surface==='flat'
+        ? ' La buse suit « '+shapeName()+' » à Z '+v.z+' mm. Entre morceaux SVG : montée de '+v.lift+' mm. Vitesse XY : '+v.speed+' mm/s. Pas de chauffe ni d’extrusion.'
+        : ' La buse suit « '+shapeName()+' » sur le '+surfaceName(v)+' avec '+v.clearance+' mm de jeu. Vitesse XY : '+v.speed+' mm/s. Pas de chauffe ni d’extrusion.'
+      : ' '+issue));
+    code.value=ok?makeCode(v,segments):'; '+issue;
+    status.textContent=ok?'Prêt — '+shapeName()+' · '+v.speed+' mm/s · '+(v.surface==='flat'?'montée Z '+v.lift+' mm':'jeu '+v.clearance+' mm')+'.':issue;
+    status.classList.toggle('bad',!ok);
+    readout.textContent = ok
+      ? v.surface==='flat'
+        ? 'Zone '+shapeName()+' : X '+v.x+'–'+(v.x+v.w)+', Y '+v.y+'–'+(v.y+v.h)+' mm · Z '+v.z+' mm · levée '+v.lift+' mm · '+v.speed+' mm/s.'
+        : (v.surface==='sphere'?'Sphère orange : centre X '+objectCenter(v).x+', Y '+objectCenter(v).y+' mm · Ø '+v.objectDiameter+' mm'
+          :'Cylindre orange ('+(v.cylinderOrientation==='side'?'couché, axe '+v.cylinderAngle+'°':'debout')+') : centre X '+objectCenter(v).x+', Y '+objectCenter(v).y+' mm · Ø '+v.objectDiameter+' mm · '+(v.cylinderOrientation==='side'?'longueur ':'hauteur ')+v.objectHeight+' mm')+' · position Z '+v.objectZ+' mm · jeu '+v.clearance+' mm · '+v.speed+' mm/s · Z transit initial '+safeTravelZ(v)+' mm.'
+      : issue;
+    draw(v,ok,null,segments);
+  }
+  function motionPoints(v,segments){
+    segments=preparedSegments(v,segments);
+    if(v.surface!=='flat'){
+      const safe=safeTravelZ(v),points=[{x:0,y:0,z:0},{x:0,y:0,z:safe}],
+        first=segments[0][0];
+      points.push({x:first.x,y:first.y,z:safe},{...first,z:surfaceZ(v,first)});
+      segments.forEach((segment,index)=>{
+        if(index>0){
+          const previous=segments[index-1][segments[index-1].length-1],travel=safeTravelZ(v,true);
+          points.push({...previous,z:travel},{...segment[0],z:travel},{...segment[0],z:surfaceZ(v,segment[0])});
+        }
+        segment.slice(1).forEach(p=>points.push({...p,z:surfaceZ(v,p)}));
+      });
+      return points;
+    }
+    const points=[{x:0,y:0,z:v.z}];
+    segments.forEach((segment,index)=>{
+      if(index===0) points.push({...segment[0],z:v.z});
+      else if(v.lift>0){
+        const previous=segments[index-1][segments[index-1].length-1];
+        points.push({...previous,z:v.z+v.lift});
+        points.push({...segment[0],z:v.z+v.lift});
+        points.push({...segment[0],z:v.z});
+      }else points.push({...segment[0],z:v.z});
+      segment.slice(1).forEach(p=>points.push({...p,z:v.z}));
+    });
+    return points;
+  }
+  function paintSimulation(now) {
+    if (!simulation || !simulation.running) return;
+    simulation.elapsed = Math.min(now - simulation.startedAt, simulation.duration);
+    const fraction = simulation.elapsed / simulation.duration;
+    const distanceDone = simulation.totalDistance * fraction;
+    let remaining = distanceDone, point = simulation.points[0];
+    for (let i = 0; i < simulation.lengths.length; i++) {
+      const length = simulation.lengths[i], a = simulation.points[i], b = simulation.points[i+1];
+      if (remaining <= length || i === simulation.lengths.length - 1) {
+        const t = length === 0 ? 1 : Math.min(1, remaining / length);
+        point = {x:a.x + (b.x-a.x)*t, y:a.y + (b.y-a.y)*t, z:a.z + (b.z-a.z)*t};
+        break;
+      }
+      remaining -= length;
+    }
+    draw(simulation.values,true,point,simulation.segments);
+    simulation.nozzlePoint = point;
+    progress.value = Math.round(fraction * 100);
+    simStatus.textContent = fraction >= 1
+      ? 'Aperçu terminé — X ' + simulation.values.x + ', Y ' + simulation.values.y + ' mm · aucun ordre envoyé à l’imprimante.'
+      : 'Aperçu accéléré ' + Math.round(fraction * 100) + ' % — buse à X ' + Math.round(point.x) + ', Y ' + Math.round(point.y) + ' mm · Z ' + Math.round(point.z) + ' mm.';
+    if (fraction < 1) frameId = requestAnimationFrame(paintSimulation);
+    else {
+      frameId = null; simulation.running = false; simulateButton.textContent = '▶ Rejouer';
+    }
+  }
+  function startSimulation() {
+    const v = values();
+    const segments=valid(v)?segmentsFor(v):null;
+    if(routeIssue(v,segments)) return;
+    if (simulation && simulation.running) {
+      simulation.running = false;
+      simulation.elapsed = performance.now() - simulation.startedAt;
+      if (frameId !== null) cancelAnimationFrame(frameId);
+      frameId = null; simulateButton.textContent = '▶ Continuer';
+      simStatus.textContent = 'Aperçu en pause · aucun ordre envoyé à l’imprimante.';
+      return;
+    }
+    if (simulation && simulation.elapsed < simulation.duration) {
+      simulation.startedAt = performance.now() - simulation.elapsed;
+      simulation.running = true; simulateButton.textContent = '⏸ Pause';
+      frameId = requestAnimationFrame(paintSimulation);
+      return;
+    }
+    const points=motionPoints(v,segments);
+    const lengths = points.slice(1).map((p,i) => Math.hypot(p.x-points[i].x, p.y-points[i].y, p.z-points[i].z));
+    const totalDistance = lengths.reduce((sum,n) => sum+n, 0);
+    const duration = Math.max(4000, Math.min(12000, totalDistance * 18));
+    simulation = {values:v,segments:preparedSegments(v,segments),points,lengths,totalDistance,duration,elapsed:0,startedAt:performance.now(),running:true};
+    simulateButton.textContent = '⏸ Pause';
+    simStatus.textContent = 'Aperçu accéléré en cours · départ à X 0, Y 0 après le homing.';
+    frameId = requestAnimationFrame(paintSimulation);
+  }
+  function redrawView() {
+    const v=values(),segments=valid(v)?segmentsFor(v):null;
+    draw(v,!routeIssue(v,segments),simulation?simulation.nozzlePoint:null,segments);
+  }
+  canvas.addEventListener('contextmenu', event => event.preventDefault());
+  canvas.addEventListener('pointerdown', event => {
+    if(event.button!==2) return;
+    event.preventDefault();
+    rotationDrag={pointerId:event.pointerId,x:event.clientX,y:event.clientY};
+    canvas.classList.add('dragging');
+    canvas.setPointerCapture(event.pointerId);
+  });
+  canvas.addEventListener('pointermove', event => {
+    if(!rotationDrag || event.pointerId!==rotationDrag.pointerId) return;
+    const dx=event.clientX-rotationDrag.x,dy=event.clientY-rotationDrag.y;
+    rotationDrag.x=event.clientX; rotationDrag.y=event.clientY;
+    const turn=2*Math.PI;
+    view.yaw=((view.yaw+dx*0.015)%turn+turn)%turn;
+    view.elevation=Math.max(8*Math.PI/180,Math.min(85*Math.PI/180,view.elevation-dy*0.01));
+    redrawView();
+  });
+  function endRotation(event) {
+    if(rotationDrag && event.pointerId===rotationDrag.pointerId){rotationDrag=null;canvas.classList.remove('dragging');}
+  }
+  canvas.addEventListener('pointerup',endRotation);
+  canvas.addEventListener('pointercancel',endRotation);
+  canvas.addEventListener('lostpointercapture',endRotation);
+  canvas.addEventListener('wheel',event=>{
+    event.preventDefault();
+    const factor=event.deltaY<0?1.12:1/1.12;
+    view.zoom=Math.max(0.55,Math.min(2.5,view.zoom*factor));
+    redrawView();
+  },{passive:false});
+  canvas.addEventListener('dblclick',event=>{
+    event.preventDefault(); view.yaw=initialView.yaw; view.elevation=initialView.elevation; view.zoom=initialView.zoom; redrawView();
+  });
+  ids.forEach(id => fields[id].addEventListener('input', update));
+  objectIds.forEach(id => fields[id].addEventListener('input', update));
+  shapeField.addEventListener('change',update);
+  surfaceField.addEventListener('change',update);
+  cylinderOrientationField.addEventListener('change',update);
+  svgFile.addEventListener('change',async()=>{
+    svgVector=null; svgError=''; svgName='';
+    const file=svgFile.files[0];
+    if(!file){update();return;}
+    if(file.size>2_000_000){svgError='Le SVG dépasse 2 Mo. Choisis un fichier plus léger.';update();return;}
+    try{svgVector=parseSvg(await file.text());svgName=file.name;}
+    catch(error){svgError=error.message||'Impossible de lire ce SVG.';}
+    update();
+  });
+  simulateButton.addEventListener('click', startSimulation);
+  document.getElementById('restartSim').addEventListener('click', () => {
+    if (frameId !== null) cancelAnimationFrame(frameId);
+    frameId = null; simulation = null; progress.value = 0; startSimulation();
+  });
+  save.addEventListener('click', () => {
+    const blob = new Blob([code.value], {type:'text/plain;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'test_trajet_cr10.gcode'; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    status.textContent = 'Fichier téléchargé : test_trajet_cr10.gcode';
+  });
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(code.value);
+      status.textContent = 'G-code copié.';
+    } catch {
+      code.focus(); code.select();
+      status.textContent = 'Sélectionné — copie avec Ctrl+C.';
+    }
+  });
+  document.getElementById('reset').addEventListener('click', () => {
+    fields.x.value=100; fields.y.value=100; fields.w.value=100; fields.h.value=100; fields.z.value=5; fields.lift.value=0; fields.speed.value=20;
+    fields.objectDiameter.value=160; fields.objectHeight.value=150; fields.objectZ.value=0; fields.clearance.value=4; fields.cylinderAngle.value=0; cylinderOrientationField.value='side'; surfaceField.value='flat';
+    shapeField.value='rectangle';
+    update();
+  });
+  update();
+})();
+</script>
+</body>
+</html>
