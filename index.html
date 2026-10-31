@@ -85,7 +85,7 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
       <fieldset>
         <legend>Aperçu 3D — plateau 300 × 300 mm</legend>
         <div class="previewbox"><canvas id="bed" width="420" height="420" aria-label="Aperçu en perspective du trajet et de sa hauteur Z"></canvas></div>
-        <div class="hint">Tourner : clic droit + glisser. Zoom : molette. Recentrer : double-clic gauche.</div>
+        <div class="hint">Tourner : clic droit + glisser (souris) ou glisser avec un doigt. Déplacer : clic gauche + glisser (souris) ou glisser avec deux doigts. Zoom : molette ou pincement. Recentrer : double-clic gauche.</div>
         <div id="readout" class="readout"></div>
         <div class="actions" style="margin-top:8px">
           <button id="simulate" type="button">▶ Simuler le trajet</button>
@@ -120,7 +120,7 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
   const cylinderOrientationField = document.getElementById('cylinderOrientation');
   const svgBox = document.getElementById('svgBox');
   const svgFile = document.getElementById('svgFile');
-  const initialView = {yaw:Math.PI/4, elevation:Math.PI/6, zoom:1};
+  const initialView = {yaw:Math.PI/4, elevation:Math.PI/6, zoom:1, panX:0, panY:0};
   const view = {...initialView};
   let svgVector = null;
   let svgName = '';
@@ -128,6 +128,9 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
   let simulation = null;
   let frameId = null;
   let rotationDrag = null;
+  let panDrag = null;
+  const touchPoints = new Map();
+  let touchMode = null;
 
   function values() {
     return {...Object.fromEntries([...ids,...objectIds].map(id => [id, Number(fields[id].value)])),surface:surfaceField.value,cylinderOrientation:cylinderOrientationField.value};
@@ -458,7 +461,7 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
       const rotatedX=dx*c-dy*s,rotatedY=dx*s+dy*c;
       const projectedX=centerX+rotatedX*axisScale;
       const projectedY=centerY+rotatedY*axisScale*Math.sin(view.elevation)-z*zScale*Math.cos(view.elevation)/Math.cos(initialView.elevation);
-      return {x:centerX+(projectedX-centerX)*view.zoom,y:centerY+(projectedY-centerY)*view.zoom};
+      return {x:centerX+view.panX+(projectedX-centerX)*view.zoom,y:centerY+view.panY+(projectedY-centerY)*view.zoom};
     };
     const depth=(x,y,z)=>{
       const dx=x-150,dy=y-150,c=Math.cos(view.yaw),s=Math.sin(view.yaw),rotatedY=dx*s+dy*c;
@@ -668,29 +671,93 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
     const v=values(),segments=valid(v)?segmentsFor(v):null;
     draw(v,!routeIssue(v,segments),simulation?simulation.nozzlePoint:null,segments);
   }
+  function rotateView(dx,dy) {
+    const turn=2*Math.PI;
+    view.yaw=((view.yaw+dx*0.015)%turn+turn)%turn;
+    view.elevation=Math.max(8*Math.PI/180,Math.min(85*Math.PI/180,view.elevation-dy*0.01));
+  }
+  function canvasScale() {
+    const rect=canvas.getBoundingClientRect();
+    return {x:canvas.width/rect.width,y:canvas.height/rect.height};
+  }
+  function touchPair() {
+    return Array.from(touchPoints.values()).slice(0,2);
+  }
+  function setTouchGesture() {
+    if(touchPoints.size>=2) {
+      const [a,b]=touchPair();
+      touchMode={kind:'two',center:{x:(a.x+b.x)/2,y:(a.y+b.y)/2},distance:Math.max(1,Math.hypot(b.x-a.x,b.y-a.y)),angle:Math.atan2(b.y-a.y,b.x-a.x)};
+    } else if(touchPoints.size===1) {
+      const [p]=touchPoints.values();
+      touchMode={kind:'rotate',pointerId:Array.from(touchPoints.keys())[0],x:p.x,y:p.y};
+    } else touchMode=null;
+    canvas.classList.toggle('dragging',touchPoints.size>0 || !!rotationDrag || !!panDrag);
+  }
   canvas.addEventListener('contextmenu', event => event.preventDefault());
   canvas.addEventListener('pointerdown', event => {
-    if(event.button!==2) return;
+    if(event.pointerType==='touch') {
+      event.preventDefault();
+      canvas.setPointerCapture(event.pointerId);
+      touchPoints.set(event.pointerId,{x:event.clientX,y:event.clientY});
+      setTouchGesture();
+      return;
+    }
+    if(event.button!==2 && event.button!==0) return;
     event.preventDefault();
-    rotationDrag={pointerId:event.pointerId,x:event.clientX,y:event.clientY};
+    const drag={pointerId:event.pointerId,x:event.clientX,y:event.clientY};
+    if(event.button===2) rotationDrag=drag;
+    else panDrag=drag;
     canvas.classList.add('dragging');
     canvas.setPointerCapture(event.pointerId);
   });
   canvas.addEventListener('pointermove', event => {
-    if(!rotationDrag || event.pointerId!==rotationDrag.pointerId) return;
-    const dx=event.clientX-rotationDrag.x,dy=event.clientY-rotationDrag.y;
-    rotationDrag.x=event.clientX; rotationDrag.y=event.clientY;
-    const turn=2*Math.PI;
-    view.yaw=((view.yaw+dx*0.015)%turn+turn)%turn;
-    view.elevation=Math.max(8*Math.PI/180,Math.min(85*Math.PI/180,view.elevation-dy*0.01));
-    redrawView();
+    if(event.pointerType==='touch') {
+      if(!touchPoints.has(event.pointerId)) return;
+      touchPoints.set(event.pointerId,{x:event.clientX,y:event.clientY});
+      if(touchMode?.kind==='rotate' && touchMode.pointerId===event.pointerId && touchPoints.size===1) {
+        rotateView(event.clientX-touchMode.x,event.clientY-touchMode.y);
+        touchMode.x=event.clientX; touchMode.y=event.clientY;
+      } else if(touchMode?.kind==='two' && touchPoints.size>=2) {
+        const [a,b]=touchPair(),center={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+        const distance=Math.max(1,Math.hypot(b.x-a.x,b.y-a.y));
+        const angle=Math.atan2(b.y-a.y,b.x-a.x);
+        const scale=canvasScale(),dx=center.x-touchMode.center.x,dy=center.y-touchMode.center.y;
+        view.panX+=dx*scale.x; view.panY+=dy*scale.y;
+        view.zoom=Math.max(0.55,Math.min(2.5,view.zoom*distance/touchMode.distance));
+        let twist=angle-touchMode.angle;
+        if(twist>Math.PI) twist-=2*Math.PI;
+        if(twist<-Math.PI) twist+=2*Math.PI;
+        view.yaw=((view.yaw+twist)%(2*Math.PI)+2*Math.PI)%(2*Math.PI);
+        touchMode={kind:'two',center,distance,angle};
+      }
+      redrawView();
+      return;
+    }
+    if(rotationDrag && event.pointerId===rotationDrag.pointerId) {
+      rotateView(event.clientX-rotationDrag.x,event.clientY-rotationDrag.y);
+      rotationDrag.x=event.clientX; rotationDrag.y=event.clientY;
+      redrawView();
+    } else if(panDrag && event.pointerId===panDrag.pointerId) {
+      const scale=canvasScale();
+      view.panX+=(event.clientX-panDrag.x)*scale.x;
+      view.panY+=(event.clientY-panDrag.y)*scale.y;
+      panDrag.x=event.clientX; panDrag.y=event.clientY;
+      redrawView();
+    }
   });
-  function endRotation(event) {
-    if(rotationDrag && event.pointerId===rotationDrag.pointerId){rotationDrag=null;canvas.classList.remove('dragging');}
+  function endPointer(event) {
+    if(event.pointerType==='touch') {
+      touchPoints.delete(event.pointerId);
+      setTouchGesture();
+      return;
+    }
+    if(rotationDrag?.pointerId===event.pointerId) rotationDrag=null;
+    if(panDrag?.pointerId===event.pointerId) panDrag=null;
+    canvas.classList.toggle('dragging',!!rotationDrag || !!panDrag || touchPoints.size>0);
   }
-  canvas.addEventListener('pointerup',endRotation);
-  canvas.addEventListener('pointercancel',endRotation);
-  canvas.addEventListener('lostpointercapture',endRotation);
+  canvas.addEventListener('pointerup',endPointer);
+  canvas.addEventListener('pointercancel',endPointer);
+  canvas.addEventListener('lostpointercapture',endPointer);
   canvas.addEventListener('wheel',event=>{
     event.preventDefault();
     const factor=event.deltaY<0?1.12:1/1.12;
@@ -698,7 +765,7 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
     redrawView();
   },{passive:false});
   canvas.addEventListener('dblclick',event=>{
-    event.preventDefault(); view.yaw=initialView.yaw; view.elevation=initialView.elevation; view.zoom=initialView.zoom; redrawView();
+    event.preventDefault(); view.yaw=initialView.yaw; view.elevation=initialView.elevation; view.zoom=initialView.zoom; view.panX=initialView.panX; view.panY=initialView.panY; redrawView();
   });
   ids.forEach(id => fields[id].addEventListener('input', update));
   objectIds.forEach(id => fields[id].addEventListener('input', update));
