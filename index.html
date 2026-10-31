@@ -69,7 +69,7 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
               <div><label for="toolOffsetZ">Décalage Z (mm)</label><input id="toolOffsetZ" type="number" min="-400" max="400" step="0.1" value="-40"></div>
             </div>
             <p class="hint">Mesurez du bout de la buse habituelle jusqu’au bout de l’outil : X+ vers X300, Y+ vers Y300, Z+ vers le haut. Un outil qui descend de 40 mm : Z = −40. Le trajet vise le bout de l’outil; le G-code compense le déplacement de la tête.</p>
-            <p class="hint">Avant le homing, le fichier demande de retirer l’outil et de libérer le plateau. Il s’arrête ensuite pour réinstaller l’outil (et replacer l’objet). Cette option exige que votre écran CR-10 affiche et respecte la pause M0; si la pause est ignorée, n’utilisez pas ce mode.</p>
+            <p class="hint">Après le homing sans outil, la tête monte uniquement en Z, puis s’arrête avant tout déplacement X/Y. À cette pause, installe l’outil et place l’objet. Ensuite, le G-code recale Z sur le bout de l’outil (en mode plateau avec Z = −40, Z0 correspond au plateau), remonte à la hauteur de transit, puis rejoint le trajet. Cette option exige que l’écran CR-10 affiche et respecte la pause M0; si la pause est ignorée, n’utilise pas ce mode.</p>
           </div>
         </div>
         <p id="liftHint" class="hint">Chaque morceau est parcouru une seule fois. 0 = levée désactivée. Entre deux tracés SVG séparés, la buse monte de cette valeur, se déplace, puis redescend à Z.</p>
@@ -237,23 +237,30 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
     const offset=activeToolOffset(v);
     return {x:toolPoint.x-offset.x,y:toolPoint.y-offset.y,z:z-offset.z};
   }
+  function toolCommandPosition(v,toolPoint,z) {
+    const offset=activeToolOffset(v);
+    return {x:toolPoint.x-offset.x,y:toolPoint.y-offset.y,z};
+  }
   function installationTipZ(v) {
     const offset=activeToolOffset(v),top=v.surface==='flat'?0:objectTop(v)+v.clearance;
-    return Math.max(10+offset.z,top+5);
+    return v.surface==='flat'?Math.max(0,1+offset.z):Math.max(1+offset.z,top+5);
+  }
+  function initialToolTravelZ(v) {
+    const offset=activeToolOffset(v),minimum=Math.max(5,Math.abs(offset.z),1+offset.z,installationTipZ(v));
+    return v.surface==='flat'?Math.max(v.z,minimum):Math.max(safeTravelZ(v),minimum);
   }
   function toolBoundsIssue(v,segments) {
     if(!v.toolOffsetEnabled) return '';
-    const center=objectCenter(v),mount=headPosition(v,center,installationTipZ(v));
+    const offset=activeToolOffset(v),mountNozzleZ=installationTipZ(v)-offset.z;
     const inXY=p=>p.x>=-0.01&&p.x<=300.01&&p.y>=-0.01&&p.y<=300.01;
-    if(!inXY(mount)||mount.z<1||mount.z>400)
-      return 'Avec ces décalages, le point de montage de l’outil sortirait des limites de la machine. Ajuste les décalages ou la zone X/Y.';
+    if(mountNozzleZ<1||mountNozzleZ>400)
+      return 'La hauteur de pause pour installer l’outil sortirait des limites Z de 1 à 400 mm. Ajuste le décalage Z ou la position de la forme.';
     for(const segment of preparedSegments(v,segments)) for(const p of segment){
       const targetZ=v.surface==='flat'?v.z:surfaceZ(v,p),head=headPosition(v,p,targetZ);
       if(!inXY(head)) return 'Avec ces décalages, la tête sortirait du plateau de 300 × 300 mm. Rapproche le trajet du centre ou ajuste X/Y.';
       if(head.z<1||head.z>400) return 'Avec ces décalages, un mouvement Z sortirait des limites de 1 à 400 mm. Ajuste le trajet ou le décalage Z.';
     }
-    const offset=activeToolOffset(v);
-    const transitHeights=v.surface==='flat'?[Math.max(v.z,5),v.z+v.lift]:[safeTravelZ(v),safeTravelZ(v,true)];
+    const transitHeights=[installationTipZ(v),initialToolTravelZ(v),...(v.surface==='flat'?[v.z+v.lift]:[safeTravelZ(v),safeTravelZ(v,true)])];
     if(transitHeights.some(z=>z-offset.z<1||z-offset.z>400))
       return 'La hauteur de transit dépasserait les limites Z de la machine avec ces décalages. Réduis le supplément de levée ou ajuste Z.';
     return '';
@@ -318,26 +325,25 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
     if(v.surface!=='flat') lines.push('; Position Z de la forme : '+v.objectZ+' mm');
     if(v.surface==='cylinder') lines.push('; Dimension longitudinale ou hauteur du cylindre : '+v.objectHeight+' mm');
     if(v.toolOffsetEnabled){
-      const offset=activeToolOffset(v);
+      const offset=activeToolOffset(v),mountTipZ=installationTipZ(v),mountNozzleZ=mountTipZ-offset.z;
       lines.push(
         '; Decalage du bout de l outil vs buse habituelle : X'+fmt(offset.x)+' Y'+fmt(offset.y)+' Z'+fmt(offset.z)+' mm',
-        '; Le parcours vise le bout de l outil; les mouvements G-code pilotent la buse habituelle.',
+        '; Le parcours vise le bout de l outil; Z sera recale apres son installation.',
         'M211 S1 ; active les butees logicielles standard',
         'M0 Retirer outil et liberer plateau puis reprendre',
-        'G28 ; homing outil retire et plateau vide'
+        'G28 ; homing outil retire et plateau vide',
+        'G1 Z'+fmt(mountNozzleZ)+' F600 ; monte seulement en Z avant la pause'
       );
-      const center=objectCenter(v),mount=headPosition(v,center,installationTipZ(v));
       lines.push(
-        'G1 Z'+fmt(mount.z)+' F600 ; monte a la hauteur sure de montage',
-        'G1 X'+fmt(mount.x)+' Y'+fmt(mount.y)+' F'+feed+' ; point de montage',
         v.surface==='flat'
-          ? 'M0 Installer outil sans bouger la tete puis reprendre'
-          : 'M0 Placer objet et installer outil puis reprendre'
+          ? 'M0 Installer outil puis reprendre; aucun mouvement XY avant la pause'
+          : 'M0 Installer outil et placer objet puis reprendre; aucun mouvement XY avant la pause',
+        'G92 Z'+fmt(mountTipZ)+' ; recale le Z sur le bout de l outil'
       );
-      const start=segments[0][0],safeTipZ=v.surface==='flat'?Math.max(v.z,5):safeTravelZ(v);
-      const safeStart=headPosition(v,start,safeTipZ),pathStart=headPosition(v,start,targetZ(start));
+      const start=segments[0][0],safeTipZ=initialToolTravelZ(v);
+      const safeStart=toolCommandPosition(v,start,safeTipZ),pathStart=toolCommandPosition(v,start,targetZ(start));
       lines.push(
-        'G1 Z'+fmt(safeStart.z)+' F600 ; se place a la hauteur de transit',
+        'G1 Z'+fmt(safeStart.z)+' F600 ; remonte avant tout deplacement XY',
         'G1 X'+fmt(safeStart.x)+' Y'+fmt(safeStart.y)+' F'+feed+' ; rejoint le depart en hauteur',
         'G1 Z'+fmt(pathStart.z)+' F600 ; descend a la hauteur du trajet'
       );
@@ -356,24 +362,24 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
       const segment=segments[s];
       if(s>0){
         if(v.surface!=='flat'){
-          const safe=headPosition(v,segment[0],safeTravelZ(v,true));
-          const start=headPosition(v,segment[0],targetZ(segment[0]));
+          const safe=toolCommandPosition(v,segment[0],safeTravelZ(v,true));
+          const start=toolCommandPosition(v,segment[0],targetZ(segment[0]));
           lines.push('G1 Z'+fmt(safe.z)+' F600 ; monte au-dessus de l objet pour le transit');
           lines.push('G1 X'+fmt(safe.x)+' Y'+fmt(safe.y)+' F'+feed+' ; deplacement en hauteur');
           lines.push('G1 Z'+fmt(start.z)+' F600 ; revient au jeu choisi');
         }else if(v.lift>0){
-          const raised=headPosition(v,segment[0],v.z+v.lift),lowered=headPosition(v,segment[0],v.z);
+          const raised=toolCommandPosition(v,segment[0],v.z+v.lift),lowered=toolCommandPosition(v,segment[0],v.z);
           lines.push('G1 Z'+fmt(raised.z)+' F600 ; leve entre les morceaux');
           lines.push('G1 X'+fmt(raised.x)+' Y'+fmt(raised.y)+' F'+feed+' ; deplacement en hauteur');
           lines.push('G1 Z'+fmt(lowered.z)+' F600 ; revient a la hauteur du trajet');
         }else{
-          const next=headPosition(v,segment[0],v.z);
+          const next=toolCommandPosition(v,segment[0],v.z);
           lines.push('G1 X'+fmt(next.x)+' Y'+fmt(next.y)+' F'+feed+' ; rejoint le morceau suivant');
         }
         previous=segment[0];
       }
       for(const p of segment.slice(1)){
-        const current=headPosition(v,p,targetZ(p)),prior=headPosition(v,previous,targetZ(previous));
+        const current=toolCommandPosition(v,p,targetZ(p)),prior=toolCommandPosition(v,previous,targetZ(previous));
         if(fmt(current.x)===fmt(prior.x)&&fmt(current.y)===fmt(prior.y)&&(v.surface==='flat'||fmt(current.z)===fmt(prior.z))) continue;
         lines.push('G1 X'+fmt(current.x)+' Y'+fmt(current.y)+(v.surface==='flat'?'':' Z'+fmt(current.z))+' F'+feed);
         previous=p;
@@ -686,10 +692,10 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
   function motionPoints(v,segments){
     segments=preparedSegments(v,segments);
     if(v.toolOffsetEnabled){
-      const center=objectCenter(v),first=segments[0][0];
-      const safe=v.surface==='flat'?Math.max(v.z,5):safeTravelZ(v);
+      const offset=activeToolOffset(v),home={x:offset.x,y:offset.y},first=segments[0][0];
+      const safe=initialToolTravelZ(v);
       const previewZ=p=>v.surface==='flat'?v.z:surfaceZ(v,p);
-      const points=[{...center,z:installationTipZ(v)},{...center,z:safe},{...first,z:safe},{...first,z:previewZ(first)}];
+      const points=[{...home,z:installationTipZ(v)},{...home,z:safe},{...first,z:safe},{...first,z:previewZ(first)}];
       segments.forEach((segment,index)=>{
         if(index>0){
           const previous=segments[index-1][segments[index-1].length-1];
