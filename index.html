@@ -480,10 +480,25 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
       ctx.beginPath(); ctx.moveTo(point(mm,0).x,point(mm,0).y); ctx.lineTo(point(mm,300).x,point(mm,300).y); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(point(0,mm).x,point(0,mm).y); ctx.lineTo(point(300,mm).x,point(300,mm).y); ctx.stroke();
     }
+    function drawRuler(axis) {
+      const alongX=axis==='X',start=point(0,0),end=alongX?point(300,0):point(0,300);
+      const dx=end.x-start.x,dy=end.y-start.y,length=Math.hypot(dx,dy),tx=dx/length,ty=dy/length;
+      let nx=-ty,ny=tx;
+      const inside=alongX?point(0,20):point(20,0);
+      if((inside.x-start.x)*nx+(inside.y-start.y)*ny>0){nx=-nx;ny=-ny;}
+      ctx.save();ctx.strokeStyle='#000080';ctx.fillStyle='#111';ctx.lineWidth=1;
+      ctx.font='9px Tahoma, Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+      for(let mm=0;mm<=300;mm+=5){
+        const p=alongX?point(mm,0):point(0,mm),major=mm%50===0,medium=mm%10===0,tick=major?9:medium?6:3;
+        ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(p.x+nx*tick,p.y+ny*tick);ctx.stroke();
+        if(major&&mm>0)ctx.fillText(String(mm),p.x+nx*14,p.y+ny*14);
+      }
+      ctx.fillText(axis,end.x+tx*13+nx*20,end.y+ty*13+ny*20);
+      ctx.restore();
+    }
+    drawRuler('X');drawRuler('Y');
     ctx.fillStyle='#111'; ctx.font='12px Tahoma, Arial';
-    ctx.fillText('Y 0 / X 0',point(0,0).x-28,point(0,0).y-8);
-    ctx.fillText('X 300',point(300,0).x-20,point(300,0).y+16);
-    ctx.fillText('Y 300',point(0,300).x-38,point(0,300).y+16);
+    ctx.fillText('X 0 / Y 0',point(0,0).x-28,point(0,0).y-8);
     if(canPreviewObject(v)) drawReference(v,point,depth);
     if(ok){
       segments=preparedSegments(v,segments);
