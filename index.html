@@ -17,6 +17,9 @@ fieldset { border:2px groove #fff; margin:0 0 12px; padding:11px 12px 12px; }
 legend { padding:0 4px; }
 label { display:block; margin:8px 0 3px; }
 input, select { width:100%; height:29px; padding:4px 7px; border:2px inset #fff; background:#fff; color:#111; font:14px Tahoma,Arial,sans-serif; }
+input[type="checkbox"] { width:16px; height:16px; padding:0; border:1px solid #666; accent-color:#000080; }
+.inline-check { display:flex; align-items:center; gap:8px; margin:8px 0 4px; }
+.tool-offset-setting { margin:9px 0 12px; }
 input[type="file"] { height:auto; padding:4px; }
 .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; }
 .hint { color:#333; font-size:12px; line-height:1.5; margin:8px 0 0; }
@@ -56,6 +59,18 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
           <div id="zBox"><label for="z">Hauteur Z au-dessus du plateau</label><input id="z" type="number" min="1" max="20" step="1" value="5"></div>
           <div><label id="liftLabel" for="lift">Montée entre morceaux SVG (mm)</label><input id="lift" type="number" min="0" max="10" step="1" value="0"></div>
           <div><label for="speed">Vitesse XY (mm/s)</label><input id="speed" type="number" min="1" max="100" step="1" value="20"></div>
+        </div>
+        <div class="tool-offset-setting">
+          <label class="inline-check"><input id="toolOffsetEnabled" type="checkbox"> Activer les décalages du bout de l’outil</label>
+          <div id="toolOffsetBox" hidden>
+            <div class="grid2">
+              <div><label for="toolOffsetX">Décalage X (mm)</label><input id="toolOffsetX" type="number" min="-300" max="300" step="0.1" value="0"></div>
+              <div><label for="toolOffsetY">Décalage Y (mm)</label><input id="toolOffsetY" type="number" min="-300" max="300" step="0.1" value="0"></div>
+              <div><label for="toolOffsetZ">Décalage Z (mm)</label><input id="toolOffsetZ" type="number" min="-400" max="400" step="0.1" value="-40"></div>
+            </div>
+            <p class="hint">Mesurez du bout de la buse habituelle jusqu’au bout de l’outil : X+ vers X300, Y+ vers Y300, Z+ vers le haut. Un outil qui descend de 40 mm : Z = −40. Le trajet vise le bout de l’outil; le G-code compense le déplacement de la tête.</p>
+            <p class="hint">Avant le homing, le fichier demande de retirer l’outil et de libérer le plateau. Il s’arrête ensuite pour réinstaller l’outil (et replacer l’objet). Cette option exige que votre écran CR-10 affiche et respecte la pause M0; si la pause est ignorée, n’utilisez pas ce mode.</p>
+          </div>
         </div>
         <p id="liftHint" class="hint">Chaque morceau est parcouru une seule fois. 0 = levée désactivée. Entre deux tracés SVG séparés, la buse monte de cette valeur, se déplace, puis redescend à Z.</p>
         <div id="objectBox" hidden>
@@ -104,7 +119,8 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
 (() => {
   const ids = ['x','y','w','h','z','lift','speed'];
   const objectIds = ['objectDiameter','objectHeight','objectZ','clearance','cylinderAngle'];
-  const fields = Object.fromEntries([...ids,...objectIds].map(id => [id, document.getElementById(id)]));
+  const toolOffsetIds = ['toolOffsetX','toolOffsetY','toolOffsetZ'];
+  const fields = Object.fromEntries([...ids,...objectIds,...toolOffsetIds].map(id => [id, document.getElementById(id)]));
   const code = document.getElementById('code');
   const status = document.getElementById('status');
   const canvas = document.getElementById('bed');
@@ -118,6 +134,8 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
   const shapeField = document.getElementById('shape');
   const surfaceField = document.getElementById('surface');
   const cylinderOrientationField = document.getElementById('cylinderOrientation');
+  const toolOffsetEnabledField = document.getElementById('toolOffsetEnabled');
+  const toolOffsetBox = document.getElementById('toolOffsetBox');
   const svgBox = document.getElementById('svgBox');
   const svgFile = document.getElementById('svgFile');
   const initialView = {yaw:Math.PI/4, elevation:Math.PI/6, zoom:1, panX:0, panY:0};
@@ -133,9 +151,10 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
   let touchMode = null;
 
   function values() {
-    return {...Object.fromEntries([...ids,...objectIds].map(id => [id, Number(fields[id].value)])),surface:surfaceField.value,cylinderOrientation:cylinderOrientationField.value};
+    return {...Object.fromEntries([...ids,...objectIds,...toolOffsetIds].map(id => [id, Number(fields[id].value)])),surface:surfaceField.value,cylinderOrientation:cylinderOrientationField.value,toolOffsetEnabled:toolOffsetEnabledField.checked};
   }
   function valid(v) {
+    if(v.toolOffsetEnabled && (![v.toolOffsetX,v.toolOffsetY,v.toolOffsetZ].every(Number.isFinite) || Math.abs(v.toolOffsetX)>300 || Math.abs(v.toolOffsetY)>300 || Math.abs(v.toolOffsetZ)>400)) return false;
     const requiredIds=v.surface==='flat'?ids:ids.filter(id=>id!=='z');
     const baseValid=requiredIds.every(id => Number.isFinite(v[id]) && Number.isInteger(v[id])) &&
       v.x >= 0 && v.y >= 0 && v.w >= 1 && v.h >= 1 &&
@@ -210,6 +229,34 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
     return radius+Math.sqrt(Math.max(0,radius*radius-dx*dx-dy*dy))+v.objectZ+v.clearance;
   }
   function safeTravelZ(v,between=false) { return objectTop(v)+v.clearance+(between?v.lift:0); }
+  function activeToolOffset(v) {
+    return v.toolOffsetEnabled?{x:v.toolOffsetX,y:v.toolOffsetY,z:v.toolOffsetZ}:{x:0,y:0,z:0};
+  }
+  function headPosition(v,toolPoint,z) {
+    const offset=activeToolOffset(v);
+    return {x:toolPoint.x-offset.x,y:toolPoint.y-offset.y,z:z-offset.z};
+  }
+  function installationTipZ(v) {
+    const offset=activeToolOffset(v),top=v.surface==='flat'?0:objectTop(v)+v.clearance;
+    return Math.max(10+offset.z,top+5);
+  }
+  function toolBoundsIssue(v,segments) {
+    if(!v.toolOffsetEnabled) return '';
+    const center=objectCenter(v),mount=headPosition(v,center,installationTipZ(v));
+    const inXY=p=>p.x>=-0.01&&p.x<=300.01&&p.y>=-0.01&&p.y<=300.01;
+    if(!inXY(mount)||mount.z<1||mount.z>400)
+      return 'Avec ces décalages, le point de montage de l’outil sortirait des limites de la machine. Ajuste les décalages ou la zone X/Y.';
+    for(const segment of preparedSegments(v,segments)) for(const p of segment){
+      const targetZ=v.surface==='flat'?v.z:surfaceZ(v,p),head=headPosition(v,p,targetZ);
+      if(!inXY(head)) return 'Avec ces décalages, la tête sortirait du plateau de 300 × 300 mm. Rapproche le trajet du centre ou ajuste X/Y.';
+      if(head.z<1||head.z>400) return 'Avec ces décalages, un mouvement Z sortirait des limites de 1 à 400 mm. Ajuste le trajet ou le décalage Z.';
+    }
+    const offset=activeToolOffset(v);
+    const transitHeights=v.surface==='flat'?[Math.max(v.z,5),v.z+v.lift]:[safeTravelZ(v),safeTravelZ(v,true)];
+    if(transitHeights.some(z=>z-offset.z<1||z-offset.z>400))
+      return 'La hauteur de transit dépasserait les limites Z de la machine avec ces décalages. Réduis le supplément de levée ou ajuste Z.';
+    return '';
+  }
   function routeIssue(v,segments) {
     if(!valid(v)) return v.surface==='flat'
       ? 'Vérifie les nombres et garde le trajet dans le plateau de 300 × 300 mm.'
@@ -229,6 +276,8 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
       if(preparedSegments(v,segments).some(segment=>segment.some(p=>surfaceZ(v,p)<1)))
         return 'Une partie du trajet demanderait un Z sous 1 mm. Remonte la forme ou déplace le trajet vers sa partie plus haute.';
     }
+    const offsetIssue=toolBoundsIssue(v,segments);
+    if(offsetIssue) return offsetIssue;
     return '';
   }
   function preparedSegments(v,segments) {
@@ -246,19 +295,20 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
     });
   }
   function makeCode(v, segments) {
-    const x2 = v.x + v.w, y2 = v.y + v.h;
+    const x2=v.x+v.w,y2=v.y+v.h;
     const feed=Math.round(v.speed*60),fmt=n=>String(Number(n.toFixed(1)));
     segments=preparedSegments(v,segments);
+    const targetZ=p=>v.surface==='flat'?v.z:surfaceZ(v,p);
     const lines=[
       '; CR-10 - test de deplacement sans chauffe ni extrusion',
       '; Plateau nominal : 300 x 300 mm',
-      '; Forme : ' + shapeName(),
+      '; Forme : '+shapeName(),
       '; Passages par morceau : 1',
-      '; Zone XY : X' + v.x + ' Y' + v.y + ' a X' + x2 + ' Y' + y2,
+      '; Zone XY du bout de l outil : X'+v.x+' Y'+v.y+' a X'+x2+' Y'+y2,
       v.surface==='flat'
-        ? '; Hauteur Z : ' + v.z + ' mm | Montee entre morceaux : ' + v.lift + ' mm'
-        : '; Surface : ' + surfaceName(v) + ' | Diametre : ' + v.objectDiameter + ' mm | Jeu : ' + v.clearance + ' mm',
-      '; Vitesse XY : ' + v.speed + ' mm/s (F' + feed + ' mm/min)',
+        ? '; Hauteur du bout de l outil : '+v.z+' mm | Montee entre morceaux : '+v.lift+' mm'
+        : '; Surface : '+surfaceName(v)+' | Diametre : '+v.objectDiameter+' mm | Jeu : '+v.clearance+' mm',
+      '; Vitesse XY : '+v.speed+' mm/s (F'+feed+' mm/min)',
       'M104 S0 ; chauffage de la buse desactive',
       'M140 S0 ; chauffage du plateau desactive',
       'G21 ; unites en millimetres',
@@ -266,44 +316,69 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
     ];
     if(v.surface!=='flat') lines.push('; Position Z de la forme : '+v.objectZ+' mm');
     if(v.surface==='cylinder') lines.push('; Dimension longitudinale ou hauteur du cylindre : '+v.objectHeight+' mm');
-    if(v.surface==='flat'){
-      lines.push('G28 ; homing des axes','G1 Z' + v.z + ' F600 ; leve la buse',
-        'G1 X' + fmt(segments[0][0].x) + ' Y' + fmt(segments[0][0].y) + ' F' + feed + ' ; rejoint le depart');
+    if(v.toolOffsetEnabled){
+      const offset=activeToolOffset(v);
+      lines.push(
+        '; Decalage du bout de l outil vs buse habituelle : X'+fmt(offset.x)+' Y'+fmt(offset.y)+' Z'+fmt(offset.z)+' mm',
+        '; Le parcours vise le bout de l outil; les mouvements G-code pilotent la buse habituelle.',
+        'M211 S1 ; active les butees logicielles standard',
+        'M0 Retirer outil et liberer plateau puis reprendre',
+        'G28 ; homing outil retire et plateau vide'
+      );
+      const center=objectCenter(v),mount=headPosition(v,center,installationTipZ(v));
+      lines.push(
+        'G1 Z'+fmt(mount.z)+' F600 ; monte a la hauteur sure de montage',
+        'G1 X'+fmt(mount.x)+' Y'+fmt(mount.y)+' F'+feed+' ; point de montage',
+        v.surface==='flat'
+          ? 'M0 Installer outil sans bouger la tete puis reprendre'
+          : 'M0 Placer objet et installer outil puis reprendre'
+      );
+      const start=segments[0][0],safeTipZ=v.surface==='flat'?Math.max(v.z,5):safeTravelZ(v);
+      const safeStart=headPosition(v,start,safeTipZ),pathStart=headPosition(v,start,targetZ(start));
+      lines.push(
+        'G1 Z'+fmt(safeStart.z)+' F600 ; se place a la hauteur de transit',
+        'G1 X'+fmt(safeStart.x)+' Y'+fmt(safeStart.y)+' F'+feed+' ; rejoint le depart en hauteur',
+        'G1 Z'+fmt(pathStart.z)+' F600 ; descend a la hauteur du trajet'
+      );
+    }else if(v.surface==='flat'){
+      lines.push('G28 ; homing des axes','G1 Z'+v.z+' F600 ; leve la buse',
+        'G1 X'+fmt(segments[0][0].x)+' Y'+fmt(segments[0][0].y)+' F'+feed+' ; rejoint le depart');
     }else{
       const start=segments[0][0];
       lines.push('; Mode objet : homing plateau vide, monter Z avant de poser l objet',
-        'G1 Z' + fmt(safeTravelZ(v)) + ' F600 ; monte au-dessus de l objet',
-        'G1 X' + fmt(start.x) + ' Y' + fmt(start.y) + ' F' + feed + ' ; rejoint le depart en hauteur',
-        'G1 Z' + fmt(surfaceZ(v,start)) + ' F600 ; descend au jeu choisi');
+        'G1 Z'+fmt(safeTravelZ(v))+' F600 ; monte au-dessus de l objet',
+        'G1 X'+fmt(start.x)+' Y'+fmt(start.y)+' F'+feed+' ; rejoint le depart en hauteur',
+        'G1 Z'+fmt(targetZ(start))+' F600 ; descend au jeu choisi');
     }
     let previous=segments[0][0];
     for(let s=0;s<segments.length;s++){
       const segment=segments[s];
       if(s>0){
         if(v.surface!=='flat'){
-          lines.push('G1 Z' + fmt(safeTravelZ(v,true)) + ' F600 ; monte au-dessus de l objet pour le transit');
-          lines.push('G1 X' + fmt(segment[0].x) + ' Y' + fmt(segment[0].y) + ' F' + feed + ' ; deplacement en hauteur');
-          lines.push('G1 Z' + fmt(surfaceZ(v,segment[0])) + ' F600 ; revient au jeu choisi');
+          const safe=headPosition(v,segment[0],safeTravelZ(v,true));
+          const start=headPosition(v,segment[0],targetZ(segment[0]));
+          lines.push('G1 Z'+fmt(safe.z)+' F600 ; monte au-dessus de l objet pour le transit');
+          lines.push('G1 X'+fmt(safe.x)+' Y'+fmt(safe.y)+' F'+feed+' ; deplacement en hauteur');
+          lines.push('G1 Z'+fmt(start.z)+' F600 ; revient au jeu choisi');
         }else if(v.lift>0){
-          lines.push('G1 Z' + (v.z+v.lift) + ' F600 ; leve entre les morceaux');
-          lines.push('G1 X' + fmt(segment[0].x) + ' Y' + fmt(segment[0].y) + ' F' + feed + ' ; deplacement en hauteur');
-          lines.push('G1 Z' + v.z + ' F600 ; revient a la hauteur du trajet');
-        }else lines.push('G1 X' + fmt(segment[0].x) + ' Y' + fmt(segment[0].y) + ' F' + feed + ' ; rejoint le morceau suivant');
+          const raised=headPosition(v,segment[0],v.z+v.lift),lowered=headPosition(v,segment[0],v.z);
+          lines.push('G1 Z'+fmt(raised.z)+' F600 ; leve entre les morceaux');
+          lines.push('G1 X'+fmt(raised.x)+' Y'+fmt(raised.y)+' F'+feed+' ; deplacement en hauteur');
+          lines.push('G1 Z'+fmt(lowered.z)+' F600 ; revient a la hauteur du trajet');
+        }else{
+          const next=headPosition(v,segment[0],v.z);
+          lines.push('G1 X'+fmt(next.x)+' Y'+fmt(next.y)+' F'+feed+' ; rejoint le morceau suivant');
+        }
         previous=segment[0];
       }
       for(const p of segment.slice(1)){
-        const x=fmt(p.x),y=fmt(p.y),z=v.surface==='flat'?null:fmt(surfaceZ(v,p));
-        if(x===fmt(previous.x) && y===fmt(previous.y) && (z===null || z===fmt(surfaceZ(v,previous)))) continue;
-        lines.push('G1 X' + x + ' Y' + y + (z===null?'':' Z'+z) + ' F' + feed);
+        const current=headPosition(v,p,targetZ(p)),prior=headPosition(v,previous,targetZ(previous));
+        if(fmt(current.x)===fmt(prior.x)&&fmt(current.y)===fmt(prior.y)&&(v.surface==='flat'||fmt(current.z)===fmt(prior.z))) continue;
+        lines.push('G1 X'+fmt(current.x)+' Y'+fmt(current.y)+(v.surface==='flat'?'':' Z'+fmt(current.z))+' F'+feed);
         previous=p;
       }
     }
-    lines.push(
-      'M400 ; attend la fin des mouvements',
-      'M104 S0',
-      'M140 S0',
-      '; Fin du test'
-    );
+    lines.push('M400 ; attend la fin des mouvements','M104 S0','M140 S0','; Fin du test');
     return lines.join('\n')+'\n';
   }
   function parseSvg(text) {
@@ -556,53 +631,74 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
     }
   }
   function update() {
-    if (frameId !== null) cancelAnimationFrame(frameId);
-    frameId = null; simulation = null;
+    if(frameId!==null) cancelAnimationFrame(frameId);
+    frameId=null; simulation=null;
     const v=values(),segments=valid(v)?segmentsFor(v):null,issue=routeIssue(v,segments),ok=!issue;
+    const targetName=v.toolOffsetEnabled?'bout de l’outil':'buse';
     svgBox.hidden=shapeField.value!=='svg';
+    toolOffsetBox.hidden=!v.toolOffsetEnabled;
     document.getElementById('objectBox').hidden=v.surface==='flat';
     document.getElementById('zBox').hidden=v.surface!=='flat';
+    document.querySelector('label[for="z"]').textContent=v.toolOffsetEnabled?'Hauteur du bout de l’outil au-dessus du plateau':'Hauteur Z au-dessus du plateau';
     document.getElementById('cylinderHeightBox').hidden=v.surface!=='cylinder';
     document.getElementById('cylinderOrientationBox').hidden=v.surface!=='cylinder';
     document.getElementById('cylinderAngleBox').hidden=v.surface!=='cylinder'||v.cylinderOrientation!=='side';
     document.getElementById('objectHeightLabel').textContent=v.cylinderOrientation==='side'?'Longueur du cylindre (mm)':'Hauteur du cylindre (mm)';
     document.querySelector('#objectBox .hint').textContent=v.surface==='sphere'
-      ? 'La forme orange est un guide visuel. Son centre suit le centre de votre zone X/Y. Le trajet suit le sommet de la sphère avec '+v.clearance+' mm de jeu.'
+      ? 'La forme orange est un guide visuel. Son centre suit le centre de votre zone X/Y. Le '+targetName+' suit le sommet de la sphère avec '+v.clearance+' mm de jeu.'
       : v.cylinderOrientation==='side'
-        ? 'Cylindre couché : 0° aligne son axe sur X, 90° sur Y. La buse suit la moitié arrondie tournée vers le haut, avec '+v.clearance+' mm de jeu.'
-        : 'La forme orange est debout. Le trajet passe au-dessus de sa face plate avec '+v.clearance+' mm de jeu.';
+        ? 'Cylindre couché : 0° aligne son axe sur X, 90° sur Y. Le '+targetName+' suit la moitié arrondie tournée vers le haut, avec '+v.clearance+' mm de jeu.'
+        : 'La forme orange est debout. Le '+targetName+' passe au-dessus de sa face plate avec '+v.clearance+' mm de jeu.';
     document.getElementById('liftLabel').textContent=v.surface==='flat'?'Montée entre morceaux SVG (mm)':'Supplément entre morceaux (mm)';
     document.getElementById('liftHint').textContent=v.surface==='flat'
-      ? 'Chaque morceau est parcouru une seule fois. 0 = levée désactivée. Entre deux tracés SVG séparés, la buse monte de cette valeur, se déplace, puis redescend à Z.'
-      : 'Chaque morceau est parcouru une seule fois. Entre tracés séparés, la buse monte au-dessus du sommet + jeu choisi, avec ce supplément, puis redescend.';
-    save.disabled = !ok; copy.disabled = !ok;
-    simulateButton.disabled = !ok; document.getElementById('restartSim').disabled = !ok;
-    simulateButton.textContent = '▶ Simuler le trajet';
-    progress.value = 0;
-    simStatus.textContent = v.surface==='flat'
-      ? 'Point rouge = buse · Bloc bleu transparent = espace vide sous le trajet, hauteur Z agrandie pour être visible.'
-      : 'Point rouge = buse · Forme orange = guide de surface · trajet bleu = parcours avec jeu.';
+      ? 'Chaque morceau est parcouru une seule fois. 0 = levée désactivée. Entre deux tracés SVG séparés, le '+targetName+' monte de cette valeur, se déplace, puis redescend à Z.'
+      : 'Chaque morceau est parcouru une seule fois. Entre tracés séparés, le '+targetName+' monte au-dessus du sommet + jeu choisi, avec ce supplément, puis redescend.';
+    save.disabled=!ok;copy.disabled=!ok;
+    simulateButton.disabled=!ok;document.getElementById('restartSim').disabled=!ok;
+    simulateButton.textContent='▶ Simuler le trajet';
+    progress.value=0;
+    simStatus.textContent=v.toolOffsetEnabled
+      ? 'Simulation du bout de l’outil; les pauses et le homing ne sont pas animés.'
+      : v.surface==='flat'
+        ? 'Point rouge = buse · Bloc bleu transparent = espace vide sous le trajet, hauteur Z agrandie pour être visible.'
+        : 'Point rouge = buse · Forme orange = guide de surface · trajet bleu = parcours avec jeu.';
     const explanation=document.getElementById('explanation');
     explanation.replaceChildren();
-    const heading=document.createElement('strong'); heading.textContent='Test de déplacement seulement.';
+    const heading=document.createElement('strong');heading.textContent='Test de déplacement seulement.';
     explanation.append(heading,document.createTextNode(ok
       ? v.surface==='flat'
-        ? ' La buse suit « '+shapeName()+' » à Z '+v.z+' mm. Entre morceaux SVG : montée de '+v.lift+' mm. Vitesse XY : '+v.speed+' mm/s. Pas de chauffe ni d’extrusion.'
-        : ' La buse suit « '+shapeName()+' » sur le '+surfaceName(v)+' avec '+v.clearance+' mm de jeu. Vitesse XY : '+v.speed+' mm/s. Pas de chauffe ni d’extrusion.'
+        ? ' Le '+targetName+' suit « '+shapeName()+' » à Z '+v.z+' mm. Entre morceaux SVG : montée de '+v.lift+' mm. Vitesse XY : '+v.speed+' mm/s. Pas de chauffe ni d’extrusion.'
+        : ' Le '+targetName+' suit « '+shapeName()+' » sur le '+surfaceName(v)+' avec '+v.clearance+' mm de jeu. Vitesse XY : '+v.speed+' mm/s. Pas de chauffe ni d’extrusion.'
       : ' '+issue));
     code.value=ok?makeCode(v,segments):'; '+issue;
-    status.textContent=ok?'Prêt — '+shapeName()+' · '+v.speed+' mm/s · '+(v.surface==='flat'?'montée Z '+v.lift+' mm':'jeu '+v.clearance+' mm')+'.':issue;
+    status.textContent=ok?'Prêt — '+shapeName()+' · '+v.speed+' mm/s · '+(v.surface==='flat'?'montée Z '+v.lift+' mm':'jeu '+v.clearance+' mm')+(v.toolOffsetEnabled?' · compensation outil active':'')+'.':issue;
     status.classList.toggle('bad',!ok);
-    readout.textContent = ok
+    readout.textContent=ok
       ? v.surface==='flat'
         ? 'Zone '+shapeName()+' : X '+v.x+'–'+(v.x+v.w)+', Y '+v.y+'–'+(v.y+v.h)+' mm · Z '+v.z+' mm · levée '+v.lift+' mm · '+v.speed+' mm/s.'
         : (v.surface==='sphere'?'Sphère orange : centre X '+objectCenter(v).x+', Y '+objectCenter(v).y+' mm · Ø '+v.objectDiameter+' mm'
           :'Cylindre orange ('+(v.cylinderOrientation==='side'?'couché, axe '+v.cylinderAngle+'°':'debout')+') : centre X '+objectCenter(v).x+', Y '+objectCenter(v).y+' mm · Ø '+v.objectDiameter+' mm · '+(v.cylinderOrientation==='side'?'longueur ':'hauteur ')+v.objectHeight+' mm')+' · position Z '+v.objectZ+' mm · jeu '+v.clearance+' mm · '+v.speed+' mm/s · Z transit initial '+safeTravelZ(v)+' mm.'
       : issue;
+    if(ok&&v.toolOffsetEnabled) readout.textContent+=' · Décalage ΔX '+v.toolOffsetX+', ΔY '+v.toolOffsetY+', ΔZ '+v.toolOffsetZ+' mm.';
     draw(v,ok,null,segments);
   }
   function motionPoints(v,segments){
     segments=preparedSegments(v,segments);
+    if(v.toolOffsetEnabled){
+      const center=objectCenter(v),first=segments[0][0];
+      const safe=v.surface==='flat'?Math.max(v.z,5):safeTravelZ(v);
+      const previewZ=p=>v.surface==='flat'?v.z:surfaceZ(v,p);
+      const points=[{...center,z:installationTipZ(v)},{...center,z:safe},{...first,z:safe},{...first,z:previewZ(first)}];
+      segments.forEach((segment,index)=>{
+        if(index>0){
+          const previous=segments[index-1][segments[index-1].length-1];
+          const travel=v.surface==='flat'?v.z+v.lift:safeTravelZ(v,true);
+          points.push({...previous,z:travel},{...segment[0],z:travel},{...segment[0],z:previewZ(segment[0])});
+        }
+        segment.slice(1).forEach(p=>points.push({...p,z:previewZ(p)}));
+      });
+      return points;
+    }
     if(v.surface!=='flat'){
       const safe=safeTravelZ(v),points=[{x:0,y:0,z:0},{x:0,y:0,z:safe}],
         first=segments[0][0];
@@ -649,7 +745,7 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
     progress.value = Math.round(fraction * 100);
     simStatus.textContent = fraction >= 1
       ? 'Aperçu terminé — X ' + simulation.values.x + ', Y ' + simulation.values.y + ' mm · aucun ordre envoyé à l’imprimante.'
-      : 'Aperçu accéléré ' + Math.round(fraction * 100) + ' % — buse à X ' + Math.round(point.x) + ', Y ' + Math.round(point.y) + ' mm · Z ' + Math.round(point.z) + ' mm.';
+      : 'Aperçu accéléré ' + Math.round(fraction * 100) + ' % — '+(simulation.values.toolOffsetEnabled?'bout de l’outil':'buse')+' à X ' + Math.round(point.x) + ', Y ' + Math.round(point.y) + ' mm · Z ' + Math.round(point.z) + ' mm.';
     if (fraction < 1) frameId = requestAnimationFrame(paintSimulation);
     else {
       frameId = null; simulation.running = false; simulateButton.textContent = '▶ Rejouer';
@@ -784,6 +880,8 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
   });
   ids.forEach(id => fields[id].addEventListener('input', update));
   objectIds.forEach(id => fields[id].addEventListener('input', update));
+  toolOffsetIds.forEach(id => fields[id].addEventListener('input', update));
+  toolOffsetEnabledField.addEventListener('change',update);
   shapeField.addEventListener('change',update);
   surfaceField.addEventListener('change',update);
   cylinderOrientationField.addEventListener('change',update);
@@ -820,7 +918,7 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
   });
   document.getElementById('reset').addEventListener('click', () => {
     fields.x.value=100; fields.y.value=100; fields.w.value=100; fields.h.value=100; fields.z.value=5; fields.lift.value=0; fields.speed.value=20;
-    fields.objectDiameter.value=160; fields.objectHeight.value=150; fields.objectZ.value=0; fields.clearance.value=4; fields.cylinderAngle.value=0; cylinderOrientationField.value='side'; surfaceField.value='flat';
+    fields.objectDiameter.value=160; fields.objectHeight.value=150; fields.objectZ.value=0; fields.clearance.value=4; fields.cylinderAngle.value=0; fields.toolOffsetX.value=0; fields.toolOffsetY.value=0; fields.toolOffsetZ.value=-40; toolOffsetEnabledField.checked=false; cylinderOrientationField.value='side'; surfaceField.value='flat';
     shapeField.value='rectangle';
     update();
   });
