@@ -69,7 +69,7 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
               <div><label for="toolOffsetZ">Décalage Z (mm)</label><input id="toolOffsetZ" type="number" min="-400" max="400" step="0.1" value="-40"></div>
             </div>
             <p class="hint">Mesurez du bout de la buse habituelle jusqu’au bout de l’outil : X+ vers X300, Y+ vers Y300, Z+ vers le haut. Un outil qui descend de 40 mm : Z = −40. Le trajet vise le bout de l’outil; le G-code compense le déplacement de la tête.</p>
-            <p class="hint">Après le homing sans outil, la tête monte uniquement en Z, puis s’arrête avant tout déplacement X/Y. À cette pause, installe l’outil et place l’objet. Ensuite, le G-code recale Z sur le bout de l’outil (en mode plateau avec Z = −40, Z0 correspond au plateau), remonte à la hauteur de transit, puis rejoint le trajet. Cette option exige que l’écran CR-10 affiche et respecte la pause M0; si la pause est ignorée, n’utilise pas ce mode.</p>
+            <p class="hint">Le fichier demande d’abord de retirer l’outil et de libérer le plateau pour le homing. Après le homing, il monte uniquement en Z et fait une pause avant le déplacement X/Y vers le trajet. Installe l’outil et place l’objet à cette pause. À la reprise, Z est recalé sur le bout de l’outil (en mode plateau avec Z = −40, Z0 correspond au plateau), puis le bout monte à la hauteur de transit avant d’aller au trajet. L’écran CR-10 doit respecter la pause M0; sinon, n’active pas ce mode.</p>
           </div>
         </div>
         <p id="liftHint" class="hint">Chaque morceau est parcouru une seule fois. 0 = levée désactivée. Entre deux tracés SVG séparés, la buse monte de cette valeur, se déplace, puis redescend à Z.</p>
@@ -336,8 +336,8 @@ footer { border-top:1px solid #888; padding:9px 14px 11px; color:#333; font-size
       );
       lines.push(
         v.surface==='flat'
-          ? 'M0 Installer outil puis reprendre; aucun mouvement XY avant la pause'
-          : 'M0 Installer outil et placer objet puis reprendre; aucun mouvement XY avant la pause',
+          ? 'M0 Installer outil puis reprendre; XY vers le trajet apres reprise'
+          : 'M0 Installer outil et placer objet puis reprendre; XY vers le trajet apres reprise',
         'G92 Z'+fmt(mountTipZ)+' ; recale le Z sur le bout de l outil'
       );
       const start=segments[0][0],safeTipZ=initialToolTravelZ(v);
